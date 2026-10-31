@@ -1,9 +1,15 @@
-// 人物冷存档 · 信度体系（设计稿 §5.1 状态码、§5.5 关闭信度时的保留规则）
+// 人物冷存档 · 信度体系（设计稿 §5.1 状态码、§5.2 他述来源、§5.5 关闭信度时的保留规则）
 //
 // 信度位永远是一个字符串，语法固定：
-//   "0"～"9" 固定码 | "X" 无信度 | "N" 不标信度 | "r<号码>[+|-]" 他述且来源是字典第 N 号
+//   "0"～"9" 固定码 | "X" 无信度 | "N" 不标信度 | "r<人物编号>[+|-]" 他述且来源是某个人物
 //
-// 注意别把两套码搞混（§5.1）：
+// 来源引用用**人物编号**（rp7），不用字典下标（r42）—— 见 ADR 0004：
+//   1. 编号唯一，同名不同人分得清；
+//   2. 名字从「正在看的那份快照」里的人物记录取（姓名按原文存放、不进字典，§4.1），
+//      所以回退到改名之前的那份快照时，看到的是当时的旧名字，不会剧透后来的新名字；
+//   3. 人名不在字典里，滚动回收也就碰不到它。
+//
+// 注意别把两套码搞混：
 //   值位置：字符串＝原文、数字＝字典下标（靠 JSON 类型区分）；
 //   信度位：本文件这一套。
 //
@@ -43,14 +49,19 @@ const FIXED_CODE = new Map(
   Object.entries(FIXED).map(([code, [source, truth]]) => [`${source}:${truth}`, code]),
 )
 
-const VIA_PATTERN = /^r(\d+)([+-])?$/
+/** 人物编号：p 开头 + 十进制数字（设计稿 §二「内部编号如 p7，始终唯一，不依赖姓名」）。 */
+const VIA_ID = /^p\d+$/
+const VIA_PATTERN = /^r(p\d+)([+-])?$/
+
+const ORDER_KEYS = new Set(['turn', 'salience', 'truth', 'source'])
 
 const SOURCE_RANK = { user: 0, self: 1, other: 2, mvu: 3, none: 4, unmarked: 5 }
 const TRUTH_RANK = { true: 0, unknown: 1, false: 2 }
 
 /**
  * 解析信度位。
- * @returns {{source: string, truth: string|null, via: number|null} | null} 无法解析时返回 null
+ * @returns {{source: string, truth: string|null, via: string|null} | null} 无法解析时返回 null
+ *   via 是人物编号字符串（如 'p7'），不是字典下标。
  */
 export function parseConfidence(code) {
   if (typeof code !== 'string') return null
@@ -61,7 +72,7 @@ export function parseConfidence(code) {
   const match = VIA_PATTERN.exec(code)
   if (match) {
     const truth = match[2] === '+' ? TRUTH.TRUE : match[2] === '-' ? TRUTH.FALSE : TRUTH.UNKNOWN
-    return { source: SOURCE.OTHER, truth, via: Number(match[1]) }
+    return { source: SOURCE.OTHER, truth, via: match[1] }
   }
 
   const fixed = FIXED[code]
@@ -77,7 +88,7 @@ export function formatConfidence({ source, truth = null, via = null } = {}) {
   if (source === SOURCE.UNMARKED) return 'N'
 
   if (source === SOURCE.OTHER && via !== null) {
-    if (!Number.isInteger(via) || via < 0) return null
+    if (typeof via !== 'string' || !VIA_ID.test(via)) return null
     // 只有「未定」才允许省略后缀；拼错的真值一律返回 null，不许悄悄写成未定。
     let suffix = ''
     if (truth === TRUTH.TRUE) suffix = '+'
@@ -89,11 +100,9 @@ export function formatConfidence({ source, truth = null, via = null } = {}) {
   return FIXED_CODE.get(`${source}:${truth}`) ?? null
 }
 
-const ORDER_KEYS = new Set(['turn', 'salience', 'truth', 'source'])
-
 /**
  * 比较两条同栏目条目，负数表示 a 该排前面（也就是该被保留）。
- * salienceOf(entry) 给出「来源关键度」：用户＝999999，在册人物按非空条目数，路人最低。
+ * salienceOf(entry) 给出「来源关键度」：用户＝999999，在册人物按关键度，路人最低。
  * order 来自设置页的拖动，脏数据（空的、含未知键）一律回落默认顺序 ——
  * 静默判平会让稳定排序保留最旧的那条，等于关信度时把用户新写的值丢掉。
  */

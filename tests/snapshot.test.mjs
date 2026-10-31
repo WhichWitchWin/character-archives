@@ -10,6 +10,7 @@ import {
   createEntry,
   createPerson,
   createSnapshot,
+  findPerson,
   readSnapshot,
 } from '../plugin/lib/snapshot.js'
 
@@ -123,4 +124,20 @@ test('字节数按 UTF-8 计（64 KB 上限用的就是这个数）', () => {
   assert.equal(byteSize('老陈'), 6)
   assert.equal(byteSize({ v: 1, t: 1, p: [['p1', 0, '甲', [], '']] }),
     Buffer.byteLength(JSON.stringify({ v: 1, t: 1, p: [['p1', 0, '甲', [], '']] }), 'utf8'))
+})
+
+test('按编号在某份快照里找人：回退看到旧名，不剧透新名（ADR 0004）', () => {
+  const earlier = { v: 1, t: 20, p: [['p7', 0, '老陈', [], '']] }
+  const later = { v: 1, t: 50, p: [['p7', 0, '陈老板', [], '']] }
+  assert.equal(findPerson(earlier, 'p7')[2], '老陈')
+  assert.equal(findPerson(later, 'p7')[2], '陈老板')
+  assert.equal(findPerson(earlier, 'p9'), null)   // 还没建档
+  assert.equal(findPerson(null, 'p7'), null)
+})
+
+test('信度位语法不合法的条目会被丢掉并记进 problems', () => {
+  const result = readSnapshot(withEntries([['a', '好值', 'r42', 1]]))
+  assert.equal(result.ok, true)
+  assert.equal(result.snapshot.p[0][3].length, 0)
+  assert.equal(result.problems.length, 1)
 })

@@ -8,12 +8,17 @@
 //   人物 = ["p7", 状态, "姓名", [条目...], "召回词串"]
 //   条目 = ["a", 值, "信度位", 轮次]
 //
+// 值位置靠 JSON 类型区分：字符串＝原文，数字＝字典下标（见 dictionary.js）。
+// **姓名按原文存放、不进字典**（§4.1）—— 这一点很关键：回退到改名之前的那份快照时，
+// 看到的自然是当时的旧名字，不会剧透后来的新名字（ADR 0004）。
+//
 // 读到坏东西的策略（§4.8「不清空、不覆盖」）：
 //   - 顶层结构坏了（不是对象 / 没有 p）→ 整份拒绝，调用方不许覆盖存档；
 //   - 单个坏人物、单条坏条目 → **只丢那一个**，其余照常读出，并记进 problems。
-//     整份报废会逼调用方去读更旧的一份，再「有变化才写」写回去，等于永久丢数据。
 //
 // 纯逻辑模块：不 import 酒馆接口、不接触 ctx。
+
+import { parseConfidence } from './confidence.js'
 
 export const SNAPSHOT_VERSION = 1
 
@@ -62,6 +67,17 @@ export function readSnapshot(raw) {
 
   // 顶层与人物都整份复制：读回来的东西随便改，不会反噬存档对象。
   return { ok: true, snapshot: { ...raw, v: raw.v, t: raw.t, p: people }, reason: null, problems }
+}
+
+/**
+ * 在**某一份快照**里按编号找人（ADR 0004）。
+ * 显示「他述来源」时必须以「正在看的那份快照」为界调用它 ——
+ * 回退到改名之前，拿到的就是当时的旧名字，不会剧透后来的新名字。
+ * @returns {any[] | null} 人物数组；找不到（还没建档 / 已被删除 / 合并后移除）返回 null
+ */
+export function findPerson(snapshot, id) {
+  if (!snapshot || !Array.isArray(snapshot.p)) return null
+  return snapshot.p.find((person) => Array.isArray(person) && person[0] === id) ?? null
 }
 
 function readPerson(person, problems) {
@@ -114,7 +130,9 @@ function readEntry(entry) {
   const isText = typeof value === 'string'
   const isIndex = Number.isSafeInteger(value) && value >= 0
   if (!isText && !isIndex) return null
-  if (typeof confidence !== 'string') return null
+  // 信度位不只要"是字符串"，还得语法合法 —— 否则坏码会安静躺着，
+  // 直到关闭信度那天被当成坏值丢掉，中间没有任何记录。
+  if (typeof confidence !== 'string' || !parseConfidence(confidence)) return null
   if (typeof turn !== 'number') return null
 
   return [...entry]

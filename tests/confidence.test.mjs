@@ -1,4 +1,7 @@
-// 信度体系（设计稿 §5.1 状态码、§5.5 关闭信度时的保留规则）
+// 信度体系（设计稿 §5.1 状态码、§5.2 他述来源、§5.5 关闭信度时的保留规则）
+//
+// 来源引用用**人物编号**（rp7），不用字典下标 —— 见 ADR 0004：
+// 字典不收人名，两个人同名会指向同一下标，滚动回收还可能把下标换成别的词。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
@@ -32,20 +35,22 @@ test('9 = MVU，X = 无信度，N = 不标信度', () => {
   assert.equal(parseConfidence('N').source, SOURCE.UNMARKED)
 })
 
-test('r 开头的来源引用：不带后缀未定，+ 真，- 假，来源号进 via', () => {
-  assert.deepEqual(parseConfidence('r42'), { source: SOURCE.OTHER, truth: TRUTH.UNKNOWN, via: 42 })
-  assert.deepEqual(parseConfidence('r42+'), { source: SOURCE.OTHER, truth: TRUTH.TRUE, via: 42 })
-  assert.deepEqual(parseConfidence('r42-'), { source: SOURCE.OTHER, truth: TRUTH.FALSE, via: 42 })
+test('来源引用用人物编号：不带后缀未定，+ 真，- 假', () => {
+  assert.deepEqual(parseConfidence('rp7'), { source: SOURCE.OTHER, truth: TRUTH.UNKNOWN, via: 'p7' })
+  assert.deepEqual(parseConfidence('rp7+'), { source: SOURCE.OTHER, truth: TRUTH.TRUE, via: 'p7' })
+  assert.deepEqual(parseConfidence('rp7-'), { source: SOURCE.OTHER, truth: TRUTH.FALSE, via: 'p7' })
+  assert.deepEqual(parseConfidence('rp123+'), { source: SOURCE.OTHER, truth: TRUTH.TRUE, via: 'p123' })
 })
 
-test('非法信度位一律返回 null，不猜', () => {
-  for (const code of ['', 'a', 'r', 'r-1', 'r42++', '42', 'x', 'n', '10', null, undefined, 9]) {
+test('非法信度位一律返回 null，不猜（含已废弃的字典下标写法 r42）', () => {
+  const bad = ['', 'a', 'r', 'rp', 'rp7x', 'rp7++', 'rp-7', 'r42', 'r42+', '42', 'x', 'n', '10', null, undefined, 9]
+  for (const code of bad) {
     assert.equal(parseConfidence(code), null, `应拒绝：${String(code)}`)
   }
 })
 
 test('format 与 parse 能往返（全部合法码）', () => {
-  const codes = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'X', 'N', 'r42', 'r42+', 'r42-']
+  const codes = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'X', 'N', 'rp7', 'rp7+', 'rp7-']
   for (const code of codes) {
     assert.equal(formatConfidence(parseConfidence(code)), code)
   }
@@ -53,15 +58,20 @@ test('format 与 parse 能往返（全部合法码）', () => {
 
 test('format 拒绝拼不出来的组合', () => {
   assert.equal(formatConfidence({ source: 'user', truth: 'maybe' }), null)
-  assert.equal(formatConfidence({ source: SOURCE.OTHER }), null)          // 他述必须带 via
-  assert.equal(formatConfidence({ source: SOURCE.OTHER, via: -1 }), null)
+  assert.equal(formatConfidence({ source: SOURCE.OTHER }), null)              // 他述必须带 via
+  assert.equal(formatConfidence({ source: SOURCE.OTHER, via: 42 }), null)     // via 必须是人物编号，不是数字
+  assert.equal(formatConfidence({ source: SOURCE.OTHER, via: 'x7' }), null)
   assert.equal(formatConfidence({}), null)
 })
 
 test('format 不会把拼错的真值悄悄降级成「未定」', () => {
-  assert.equal(formatConfidence({ source: SOURCE.OTHER, truth: 'maybe', via: 42 }), null)
-  assert.equal(formatConfidence({ source: SOURCE.OTHER, truth: TRUTH.UNKNOWN, via: 42 }), 'r42')
-  assert.equal(formatConfidence({ source: SOURCE.OTHER, truth: TRUTH.FALSE, via: 42 }), 'r42-')
+  assert.equal(formatConfidence({ source: SOURCE.OTHER, truth: 'maybe', via: 'p7' }), null)
+  assert.equal(formatConfidence({ source: SOURCE.OTHER, truth: TRUTH.UNKNOWN, via: 'p7' }), 'rp7')
+  assert.equal(formatConfidence({ source: SOURCE.OTHER, truth: TRUTH.FALSE, via: 'p7' }), 'rp7-')
+})
+
+test('排序默认顺序与设计稿一致：轮次→来源关键度→真值→来源', () => {
+  assert.deepEqual(DEFAULT_ORDER, ['turn', 'salience', 'truth', 'source'])
 })
 
 test('排序键不认识或为空时回落默认顺序，不静默判平', () => {
@@ -69,10 +79,6 @@ test('排序键不认识或为空时回落默认顺序，不静默判平', () =>
   const newer = entry('6', 30, '新')
   assert.ok(compareEntries(newer, older, { order: [] }) < 0)
   assert.ok(compareEntries(newer, older, { order: ['triple'] }) < 0)
-})
-
-test('排序默认顺序与设计稿一致：轮次→来源关键度→真值→来源', () => {
-  assert.deepEqual(DEFAULT_ORDER, ['turn', 'salience', 'truth', 'source'])
 })
 
 test('排序：轮次新的排前面', () => {
@@ -109,9 +115,7 @@ test('排序：四项优先级可由玩家拖动改变', () => {
   const older = entry('0', 10, '旧但来源高')
   const newer = entry('8', 20, '新但来源低')
   const salienceOf = (e) => (e[2] === '0' ? 999999 : 0)
-  // 默认先看轮次：新的优先
   assert.ok(compareEntries(newer, older, { salienceOf }) < 0)
-  // 改成先看来源关键度：用户说的那条优先
   assert.ok(compareEntries(older, newer, { order: ['salience', 'turn'], salienceOf }) < 0)
 })
 
@@ -120,8 +124,8 @@ test('保留规则：N（不标信度）全部保留，不参与排序也不被�
   const newer = entry('8', 30, '新值')
   const entries = [entry('N', 5, '形象一'), entry('N', 6, '形象二'), older, newer]
   const { kept, dropped } = selectKept(entries)
-  assert.equal(kept.filter((e) => e[2] === 'N').length, 2)   // 两条 N 都活着
-  assert.deepEqual(kept.filter((e) => e[2] !== 'N'), [newer]) // 普通值里只有新的留下
+  assert.equal(kept.filter((e) => e[2] === 'N').length, 2)
+  assert.deepEqual(kept.filter((e) => e[2] !== 'N'), [newer])
   assert.deepEqual(dropped, [older])
 })
 
@@ -144,7 +148,7 @@ test('保留规则：没有 MVU 时才排序，只留排第一的那条', () => 
 
 test('保留规则：信度位坏掉的条目按丢弃处理，不猜', () => {
   const good = entry('0', 10, '好的')
-  const broken = entry('???', 20, '坏的')
+  const broken = entry('r42', 20, '废弃写法')
   const { kept, dropped } = selectKept([good, broken])
   assert.deepEqual(kept, [good])
   assert.deepEqual(dropped, [broken])
