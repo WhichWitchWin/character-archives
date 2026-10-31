@@ -1,99 +1,81 @@
-// 人物冷存档 · 容量（设计稿 §3.2 上限、§3.3 写入策略、§3.4 快照价值与删除顺序、§3.5 兜底）
+// 人物冷存档 · 容量（设计稿 §3.2 上限、§3.3 写入策略、§3.4 每局总量删除规则、§3.5 容量兜底）
 //
-// 两套上限别混：
-//   - 单条快照 64 KB（按 UTF-8 字节，见 snapshot.js 的 byteSize）
-//   - 每插件每局 8 MB、2000 条
+// 新版口径（用户 2026-10-31 改稿）：
+//   - 8 MB 总量：**不再看变化率**，一律按最早轮次删；95% 提示、98% 自动删最早 10 份
+//   - 单条 64 KB：**没有 80% 自动清理**；95% 提示、97% 着重提示 + 一键清理（清到 90% 以下）、99% 拒绝写入
+//   - 整局数据 256 KB：>90% 触发一次全量扫描回收、95% 着重提示；**不停止收录**
+//   - 快照条数 2000：1900 提示、1999 删最早 100 份
 //
-// 删旧快照只看「变化率」的**相对**大小，不设绝对阈值：永远从最低的开始删，删够为止。
-// 最低的那份也高于 20% 时停手 —— 再删就要毁掉里程碑了（§3.4 的 20% 安全线）。
-//
+// 三个上限别混：单条 64 KB / 每局 8 MB + 2000 条 / 整局数据 256 KB。
 // 纯逻辑模块：不 import 酒馆接口、不接触 ctx。
 
 export const CAPACITY = Object.freeze({
   SNAPSHOT_BYTES: 64 * 1024,          // 单条快照上限
   GAME_TOTAL_BYTES: 8 * 1024 * 1024,  // 每插件每局总量
-  RECORD_LIMIT: 2000,                 // 每局条数上限
-  RECORD_WARN: 1800,                  // 接近上限的提示线
+  GAME_DATA_BYTES: 256 * 1024,        // 整局数据上限（字典、锁、索引都在里面）
+  RECORD_LIMIT: 2000,                 // 每局快照条数上限
 
-  NOTICE_PERCENT: 60,                 // 记一条「已用 60%」
-  CLEAN_PERCENT: 80,                  // 开始清空最久未更新人物的条目
-  CLEAN_TARGET_PERCENT: 75,           // 清到回落到这个水位以下
-  REJECT_PERCENT: 95,                 // 拒绝一切新增内容
+  SNAPSHOT_WARN_PERCENT: 95,          // 提示板记「人物册即将溢出」
+  SNAPSHOT_CLEAN_PERCENT: 97,         // 着重提示 + 一键自动清理
+  SNAPSHOT_CLEAN_TARGET_PERCENT: 90,  // 清到 90% 以下才停
+  SNAPSHOT_REJECT_PERCENT: 99,        // 拒绝一切新增
 
-  SAFE_RATE: 0.2,                     // 20% 安全线
-  FREE_HEADROOM: 0.05,                // 腾空间时多留 5%
+  GAME_TOTAL_NOTICE_PERCENT: 95,      // 提示可用「压缩人物册历史」
+  GAME_TOTAL_PRUNE_PERCENT: 98,       // 自动删最早 N 份
+  GAME_TOTAL_PRUNE_COUNT: 10,
+
+  GAME_DATA_SCAN_PERCENT: 90,         // 严格大于这个数才扫描
+  GAME_DATA_URGENT_PERCENT: 95,       // 着重提示，等冷存储
+
+  RECORD_WARN: 1900,                  // 提示「快照数量接近上限」
+  RECORD_PRUNE_AT: 1999,              // 删最早 N 份
+  RECORD_PRUNE_COUNT: 100,
 })
 
-/**
- * 单条快照的水位。
- * @returns {'ok' | 'notice' | 'clean' | 'reject'}
- */
-export function pressure(bytes, limit = CAPACITY.SNAPSHOT_BYTES) {
-  const percent = limit > 0 ? (bytes / limit) * 100 : 0
-  if (percent >= CAPACITY.REJECT_PERCENT) return 'reject'
-  if (percent >= CAPACITY.CLEAN_PERCENT) return 'clean'
-  if (percent >= CAPACITY.NOTICE_PERCENT) return 'notice'
+/** 单条快照水位：'ok' | 'notice'(95) | 'urgent'(97，要给一键清理) | 'reject'(99) */
+export function snapshotPressure(bytes, limit = CAPACITY.SNAPSHOT_BYTES) {
+  if (atLeast(bytes, limit, CAPACITY.SNAPSHOT_REJECT_PERCENT)) return 'reject'
+  if (atLeast(bytes, limit, CAPACITY.SNAPSHOT_CLEAN_PERCENT)) return 'urgent'
+  if (atLeast(bytes, limit, CAPACITY.SNAPSHOT_WARN_PERCENT)) return 'notice'
+  return 'ok'
+}
+
+/** 每局总量水位：'ok' | 'notice'(95，提示可压缩) | 'prune'(98，自动删最早 10 份) */
+export function gameTotalPressure(bytes, limit = CAPACITY.GAME_TOTAL_BYTES) {
+  if (atLeast(bytes, limit, CAPACITY.GAME_TOTAL_PRUNE_PERCENT)) return 'prune'
+  if (atLeast(bytes, limit, CAPACITY.GAME_TOTAL_NOTICE_PERCENT)) return 'notice'
+  return 'ok'
+}
+
+/** 整局数据水位：'ok' | 'scan'(>90，触发一次全量扫描回收) | 'urgent'(95，着重提示) */
+export function gameDataPressure(bytes, limit = CAPACITY.GAME_DATA_BYTES) {
+  if (atLeast(bytes, limit, CAPACITY.GAME_DATA_URGENT_PERCENT)) return 'urgent'
+  if (bytes * 100 > limit * CAPACITY.GAME_DATA_SCAN_PERCENT) return 'scan'
+  return 'ok'
+}
+
+/** 快照条数水位：'ok' | 'warn'(1900) | 'prune'(1999，删最早 100 份) */
+export function recordPressure(count) {
+  if (count >= CAPACITY.RECORD_PRUNE_AT) return 'prune'
+  if (count >= CAPACITY.RECORD_WARN) return 'warn'
   return 'ok'
 }
 
 /**
- * 每份快照的变化率：|本轮字节 − 上一份字节| ÷ 上一份字节（§3.4）。
- * 「上一份」指该轮之前最近一份**实际存在**的快照。起点没有前一版，记 null。
- * @param {{turn:number, bytes:number}[]} index
- * @returns {Map<number, number|null>} 轮次 → 变化率
+ * 挑出最早轮次的若干份快照（§3.4）。
+ * **起点不特殊对待** —— 它和别的快照一样按轮次最早优先被删。
+ * @param {{turn:number, bytes:number}[]} index 轻量快照索引
+ * @returns {number[]} 要删除的轮次，从早到晚
  */
-export function snapshotRates(index) {
-  const sorted = [...index].sort((a, b) => a.turn - b.turn)
-  const rates = new Map()
-  sorted.forEach((item, position) => {
-    if (position === 0) {
-      rates.set(item.turn, null)
-      return
-    }
-    const previous = sorted[position - 1]
-    // 上一份是 0 字节时无从算比例，当成「完全变了」，免得除零
-    const rate = previous.bytes > 0 ? Math.abs(item.bytes - previous.bytes) / previous.bytes : 1
-    rates.set(item.turn, rate)
-  })
-  return rates
+export function pruneOldest(index, count) {
+  const wanted = Math.max(0, Math.trunc(count))
+  return [...index]
+    .sort((a, b) => a.turn - b.turn)
+    .slice(0, wanted)
+    .map((item) => item.turn)
 }
 
-/**
- * 挑出该删哪几份，腾够 needBytes。每删一份都重算剩下快照的变化率（§3.4）。
- * 起点不参与删除；变化率相近时轮次更早的先删。
- *
- * @returns {{victims:number[], freed:number, stopped:string|null, minRate:number|null}}
- *   stopped 为 'safe-line' 表示最低变化率也高于安全线，已停手，victims 是停手前删掉的。
- */
-export function pickVictims(index, needBytes = 0, { safeRate = CAPACITY.SAFE_RATE } = {}) {
-  let remaining = [...index].sort((a, b) => a.turn - b.turn).map((item) => ({ ...item }))
-  const victims = []
-  let freed = 0
-
-  while (freed < needBytes && remaining.length > 1) {
-    const rates = snapshotRates(remaining)
-
-    // 起点（remaining[0]）永远不删
-    let best = null
-    for (const item of remaining.slice(1)) {
-      const rate = rates.get(item.turn)
-      if (!best || rate < best.rate || (rate === best.rate && item.turn < best.turn)) {
-        best = { turn: item.turn, rate }
-      }
-    }
-    if (!best) break
-    if (best.rate > safeRate) return { victims, freed, stopped: 'safe-line', minRate: best.rate }
-
-    victims.push(best.turn)
-    freed += remaining.find((item) => item.turn === best.turn).bytes
-    remaining = remaining.filter((item) => item.turn !== best.turn)
-  }
-
-  // 腾不出来时必须明说：否则调用方会把「删光了还是不够」当成「删够了」继续写。
-  return { victims, freed, stopped: freed >= needBytes ? null : 'exhausted', minRate: null }
-}
-
-/** 想写一份 size 字节的新快照，需要先腾出多少空间（§3.3：本次大小 + 5%）。 */
-export function targetFreeBytes(size) {
-  return Math.ceil(size * (1 + CAPACITY.FREE_HEADROOM))
+// 用整数交叉相乘比较百分比，避免 0.95 这类浮点数在边界上抖。
+function atLeast(bytes, limit, percent) {
+  return bytes * 100 >= limit * percent
 }
