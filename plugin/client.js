@@ -1,8 +1,7 @@
 // 人物冷存档 · 浏览器侧（M1 骨架）
 //
-// 两个入口（设计稿 §8.1、§3.5）：
-//   - 侧栏「NPC档案馆」面板：registerPanel
-//   - 「酒馆状态」页一节的记录区：registerStatusSection
+// 唯一入口：侧栏「NPC档案馆」面板（registerPanel）。
+// 人物册内容与容量/动作记录都放在这一页里，不占「酒馆状态」页。
 //
 // 本文件由浏览器直接加载，不打包；改完几秒内自动生效。
 // load 的 id 必须和 package.json 的 name 一致。
@@ -82,21 +81,15 @@ window.__ModuleLoader__.load({
           render: ({ gameId }) =>
             h(
               'div',
-              { style: { padding: 12, display: 'flex', flexDirection: 'column', gap: 10 } },
-              h('div', { style: { fontWeight: 600 } }, 'NPC档案馆'),
+              { style: { padding: 12, display: 'flex', flexDirection: 'column', gap: 14 } },
+              h('div', { style: { fontWeight: 600, fontSize: 15 } }, 'NPC档案馆'),
               h(SummaryBlock, { tavernUi, gameId, detailed: true }),
-            ),
-        })
-
-        // 「酒馆状态」页的一节（设计稿 §3.5：容量与动作记录都落在这一节）
-        tavernUi.registerStatusSection({
-          id: 'npc-archives',
-          title: '人物册',
-          render: ({ gameId }) =>
-            h(
-              'div',
-              { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
-              h(SummaryBlock, { tavernUi, gameId, detailed: false }),
+              h(
+                'div',
+                { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+                h('div', { style: { fontWeight: 600, fontSize: 13 } }, '记录'),
+                h('div', { style: muted }, '暂无记录（容量变化与每轮动作会记在这里）'),
+              ),
             ),
         })
       },

@@ -38,20 +38,9 @@ DSH Tavern 的第三方插件「NPC档案馆」（`dsh-tavern-npc-archives`）�
 | `plugin-api-ui.md` | `registerPanel`、`registerStatusSection`、`callHost` 等浏览器侧接口 |
 | `plugin-api-cards.md` | 人物卡库、`updateCardRaw`、Skill |
 
-## 测试
+## 开发与测试
 
-```bash
-npm test                              # 全部单测，几秒内跑完
-node --test tests/settings.test.mjs   # 只跑一个文件
-```
-
-**不要**为了「顺手看一眼」去装依赖或跑酒馆全量测试。
-
-## 提交
-
-- 每完成一个可验收的点就单独提交一次，提交只包含该改动。
-- 提交信息用中文，写清「做了什么 / 为什么」。
-- 不提交：`node_modules/`、`.tavern-entry.mjs`、调试产物（见 `.gitignore`）。
+开发环境、调试循环（含「为什么不能用 junction」）、测试命令、提交规范，统一写在 [CONTRIBUTING.md](CONTRIBUTING.md)。本文件只放「给 AI 的硬性要求」和代码规范。
 
 ## 清理
 
