@@ -41,7 +41,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
 
   // 召回（§7.3～§7.5、§7.10）
   recall: Object.freeze({
-    budgetChars: 2000,         // 每轮召回字数预算
+    budgetChars: 3000,         // 每轮召回注入的**上限**（字符数），不是每轮固定注入这么多
+    budgetMin: 500,
+    budgetMax: 6000,
     level: 'mixed',            // 'mixed' 混合 | 'full' 全部全量 | 'brief' 全部简版
     modelQueryTool: true,      // 前台模型主动查询工具
     algorithm: 'equal-weight', // 'equal-weight' 等权归一化 | 'rrf' 名次融合

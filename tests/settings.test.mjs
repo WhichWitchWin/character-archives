@@ -1,4 +1,4 @@
-import { test } from 'node:test'
+﻿import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
@@ -17,7 +17,9 @@ test('默认值与设计稿 §8.6 一致', () => {
   assert.equal(DEFAULT_SETTINGS.confidence.enabled, true)
   assert.equal(DEFAULT_SETTINGS.confidence.reopenAs, '7')
   assert.deepEqual(DEFAULT_SETTINGS.confidence.closeOrder, ['turn', 'salience', 'truth', 'source'])
-  assert.equal(DEFAULT_SETTINGS.recall.budgetChars, 2000)
+  assert.equal(DEFAULT_SETTINGS.recall.budgetChars, 3000)
+  assert.equal(DEFAULT_SETTINGS.recall.budgetMin, 500)
+  assert.equal(DEFAULT_SETTINGS.recall.budgetMax, 6000)
   assert.equal(DEFAULT_SETTINGS.recall.level, 'mixed')
   assert.equal(DEFAULT_SETTINGS.recall.algorithm, 'equal-weight')
   assert.equal(DEFAULT_SETTINGS.recall.cooldownTurns, 10)
@@ -68,6 +70,6 @@ test('返回的是深拷贝，改它不会污染默认值', () => {
   const settings = resolveSettings(null)
   settings.recall.budgetChars = 1
   settings.firstExit.mode = 'manual'
-  assert.equal(DEFAULT_SETTINGS.recall.budgetChars, 2000)
+  assert.equal(DEFAULT_SETTINGS.recall.budgetChars, 3000)
   assert.equal(DEFAULT_SETTINGS.firstExit.mode, 'auto')
 })
