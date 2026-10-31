@@ -16,9 +16,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
     fuzzyTurns: 3,             // 模糊离场判定轮数（1～5）
   }),
 
-  // 写入方式（ADR 0007）：async 异步结算（默认，不阻塞）/ background 后台结算（阻塞，保证赶上下一轮）/ off 关闭
+  // 档案写入方式（ADR 0007）：subagent 子代理写入（默认，不等）/ background 后台写入（阻塞，保证及时）/ off 关闭
   writeback: Object.freeze({
-    mode: 'async',
+    mode: 'subagent',
   }),
 
   // 信度（§5.3～§5.6）
@@ -97,4 +97,43 @@ function merge(base, patch) {
     else base[key] = value
   }
   return base
+}
+
+// ---------- 设置页文案：档案写入方式（ADR 0007） ----------
+// 文案集中放在这里，界面直接取，避免同一句话在多个文件里各写一遍。
+
+export const WRITEBACK_TITLE = '档案写入方式'
+
+/** 设置项总说明：这个选项影响什么。 */
+export const WRITEBACK_SUMMARY =
+  '每一轮正文写完后，插件要不要自动判断并更新人物册。' +
+  '只影响人物册的记录，不影响酒馆自己的变量结算。'
+
+export const WRITEBACK_MODES = Object.freeze([
+  Object.freeze({
+    id: 'subagent',
+    label: '子代理写入',
+    detail: '每轮派一个临时子代理去判断和整理，派出去就不等它了。',
+    pros: Object.freeze(['你完全不会被卡住', '人物册在后台自己慢慢更新']),
+    cons: Object.freeze(['记录可能晚一轮才出现：这一轮刚发生的事，下一轮注入时可能还没写进去']),
+  }),
+  Object.freeze({
+    id: 'background',
+    label: '后台写入',
+    detail: '把它挂在酒馆的后台结算里，写完了才继续下一轮。',
+    pros: Object.freeze(['最及时：这一轮发生的事，下一轮就能用上']),
+    cons: Object.freeze(['每轮会多等一会儿，任务越慢等得越久', '有后台任务时本局会显示后台忙，编辑等操作要等它结束']),
+  }),
+  Object.freeze({
+    id: 'off',
+    label: '关闭',
+    detail: '不自动判断、不自动写档案。',
+    pros: Object.freeze(['不花后台模型的额度', '完全不会打扰你']),
+    cons: Object.freeze(['人物册只能靠你自己在面板里手动维护']),
+  }),
+])
+
+/** 取某一档的文案；档位不认识时回落到默认档。 */
+export function writebackMode(mode) {
+  return WRITEBACK_MODES.find((item) => item.id === mode) ?? WRITEBACK_MODES[0]
 }
