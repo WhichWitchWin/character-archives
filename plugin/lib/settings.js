@@ -16,8 +16,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
     fuzzyTurns: 3,             // 模糊离场判定轮数（1～5）
   }),
 
-  // 自动判断（§10.2）
-  autoJudge: true,
+  // 写入方式（ADR 0007）：async 异步结算（默认，不阻塞）/ background 后台结算（阻塞，保证赶上下一轮）/ off 关闭
+  writeback: Object.freeze({
+    mode: 'async',
+  }),
 
   // 信度（§5.3～§5.6）
   confidence: Object.freeze({

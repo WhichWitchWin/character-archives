@@ -18,6 +18,13 @@ test('默认值与设计稿 §8.6 一致', () => {
   assert.equal(DEFAULT_SETTINGS.notice.detail, 'standard')
 })
 
+test('写入方式三档，默认异步结算（ADR 0007）', () => {
+  assert.equal(DEFAULT_SETTINGS.writeback.mode, 'async')
+  assert.equal(resolveSettings(null).writeback.mode, 'async')
+  assert.equal(resolveSettings({ writeback: { mode: 'background' } }).writeback.mode, 'background')
+  assert.equal(resolveSettings({ writeback: { mode: 'off' } }).writeback.mode, 'off')
+})
+
 test('没保存过时返回一份默认值', () => {
   assert.deepEqual(resolveSettings(null), DEFAULT_SETTINGS)
   assert.deepEqual(resolveSettings(undefined), DEFAULT_SETTINGS)
