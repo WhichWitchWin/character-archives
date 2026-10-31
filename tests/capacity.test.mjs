@@ -102,6 +102,29 @@ test('只有起点一份时无处可删', () => {
   assert.equal(result.freed, 0)
 })
 
+test('腾不出足够空间时必须明说，不能和「删够了」同形', () => {
+  const index = [
+    { turn: 10, bytes: 1000 },
+    { turn: 20, bytes: 1050 },
+    { turn: 30, bytes: 1100 },
+  ]
+  const result = pickVictims(index, 8 * 1024 * 1024)
+  assert.equal(result.stopped, 'exhausted')
+  assert.ok(result.freed < 8 * 1024 * 1024)
+})
+
+test('删一份之后必须用新邻居重算变化率（不重算就会多删一份）', () => {
+  const index = [
+    { turn: 10, bytes: 1000 },
+    { turn: 20, bytes: 1100 }, // +10%
+    { turn: 30, bytes: 1310 }, // +19.1%，按旧基准看低于安全线
+  ]
+  // 删掉 20 之后，30 的基准变成 10 → (1310-1000)/1000 = 31% → 越过 20% 安全线，必须停手
+  const result = pickVictims(index, 2000)
+  assert.deepEqual(result.victims, [20])
+  assert.equal(result.stopped, 'safe-line')
+})
+
 test('腾空间要留出「本次快照大小 + 5%」', () => {
   assert.equal(targetFreeBytes(1000), 1050)
   assert.equal(targetFreeBytes(0), 0)

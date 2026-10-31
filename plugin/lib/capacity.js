@@ -89,7 +89,8 @@ export function pickVictims(index, needBytes = 0, { safeRate = CAPACITY.SAFE_RAT
     remaining = remaining.filter((item) => item.turn !== best.turn)
   }
 
-  return { victims, freed, stopped: null, minRate: null }
+  // 腾不出来时必须明说：否则调用方会把「删光了还是不够」当成「删够了」继续写。
+  return { victims, freed, stopped: freed >= needBytes ? null : 'exhausted', minRate: null }
 }
 
 /** 想写一份 size 字节的新快照，需要先腾出多少空间（§3.3：本次大小 + 5%）。 */

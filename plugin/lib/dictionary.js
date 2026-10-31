@@ -3,6 +3,10 @@
 // 用整数下标代替号码：字典就是两个并行数组，下标即号码。
 // 值位置靠 JSON 类型区分：字符串＝原文，数字＝字典下标（§4.3）。
 //
+// 读存档的铁律：**下标就是号码，号码绝不能挪**。
+// 所以坏槽位一律保留占位（解出 null），绝不压缩数组 —— 压缩会让后面每个下标
+// 换一个内容，历史快照会解出语法正常、语义完全无关的句子（§4.6 亲口警告过的失效）。
+//
 // 纯逻辑模块：不 import 酒馆接口、不接触 ctx，数据进数据出，本地可单测。
 
 export const TYPE = Object.freeze({
@@ -11,6 +15,8 @@ export const TYPE = Object.freeze({
   MVU: 3,    // MVU 值 —— 不收录
   COMMON: 4, // 常用词 —— 只有这一类会进字典
 })
+
+export const DICTIONARY_VERSION = 1
 
 const NEVER_COLLECT_TYPES = new Set([TYPE.PERSON, TYPE.PLACE, TYPE.MVU])
 
@@ -45,43 +51,46 @@ export function classify(text, type = TYPE.COMMON) {
 
 /** 空字典的落盘形状。 */
 export function createDictionary() {
-  return { v: 1, d: [], t: [] }
+  return { v: DICTIONARY_VERSION, d: [], t: [] }
 }
 
 /**
  * 从落盘数据打开字典，同时重建反向索引（不落盘，加载时临时构造，§4.5）。
- * 坏数据一律退回空字典，不抛错 —— 存档坏了也不该让插件崩。
+ * 坏槽位保留占位，**绝不压缩**（压缩 = 让后面所有下标错位）。
+ * 整份结构不可用时才退回空字典。字典自带 v，高于当前时转为只读（§4.8）。
  */
 export function openDictionary(raw) {
-  const words = []
-  const types = []
-  if (raw && typeof raw === 'object' && Array.isArray(raw.d)) {
-    const sourceTypes = Array.isArray(raw.t) ? raw.t : []
-    raw.d.forEach((word, index) => {
-      if (typeof word !== 'string' || !word) return
-      words.push(word)
-      types.push(typeof sourceTypes[index] === 'number' ? sourceTypes[index] : TYPE.COMMON)
-    })
-  }
-  return new Dictionary(words, types)
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw) && Array.isArray(raw.d) ? raw : null
+  const words = source ? source.d.map((word) => (typeof word === 'string' && word ? word : null)) : []
+  const sourceTypes = source && Array.isArray(source.t) ? source.t : []
+  const types = words.map((_, index) => (typeof sourceTypes[index] === 'number' ? sourceTypes[index] : TYPE.COMMON))
+  const version = source && Number.isInteger(source.v) ? source.v : DICTIONARY_VERSION
+  return new Dictionary(words, types, version > DICTIONARY_VERSION)
 }
 
 class Dictionary {
   #words
   #types
+  #readOnly
   #index = new Map()   // 文字 → 号码，重建后可 O(1) 查找
   #seen = new Map()    // 还没收录的词出现过几次（内存态，不落盘）
 
-  constructor(words, types) {
+  constructor(words, types, readOnly = false) {
     this.#words = words
     this.#types = types
+    this.#readOnly = readOnly
     words.forEach((word, index) => {
-      if (!this.#index.has(word)) this.#index.set(word, index)
+      if (word && !this.#index.has(word)) this.#index.set(word, index)
     })
   }
 
   get size() {
     return this.#words.length
+  }
+
+  /** 字典版本高于插件：只读，不再收录新词（§4.8「拒绝参与写入」）。 */
+  get readOnly() {
+    return this.#readOnly
   }
 
   /** 已收录词条的号码；没有则 -1。 */
@@ -92,16 +101,18 @@ class Dictionary {
 
   /**
    * 把一句话编码成快照里的「值位置」：
-   * 数字＝字典下标，字符串＝原文。不值得收的词永远返回原文。
+   * 数字＝字典下标，字符串＝原文。不值得收的词、只读字典，都返回原文。
    */
   encode(text, type = TYPE.COMMON) {
     const value = String(text ?? '')
     const key = value.trim()
-    const mode = classify(value, type)
-    if (mode === 'never') return value
 
     const existing = this.#index.get(key)
     if (existing !== undefined) return existing
+
+    const mode = classify(value, type)
+    if (mode === 'never') return value
+    if (this.#readOnly) return value
 
     if (mode === 'second') {
       const times = (this.#seen.get(key) ?? 0) + 1
@@ -115,16 +126,19 @@ class Dictionary {
     return index
   }
 
-  /** 把快照里的「值位置」还原成文字。越界或类型不对返回 null，由调用方兜底。 */
+  /** 把快照里的「值位置」还原成文字。坏槽位、越界、类型不对都返回 null，由调用方兜底。 */
   decode(value) {
-    if (typeof value === 'number') return this.#words[value] ?? null
+    if (typeof value === 'number') {
+      if (!Number.isSafeInteger(value) || value < 0) return null
+      return this.#words[value] ?? null
+    }
     if (typeof value === 'string') return value
     return null
   }
 
-  /** 落盘形状（深拷贝，改它不影响字典本身）。 */
+  /** 落盘形状（深拷贝，改它不影响字典本身）。坏槽位以 null 占位，长度不变。 */
   snapshot() {
-    return { v: 1, d: [...this.#words], t: [...this.#types] }
+    return { v: DICTIONARY_VERSION, d: [...this.#words], t: [...this.#types] }
   }
 
   /**
@@ -143,8 +157,10 @@ class Dictionary {
   /**
    * 原地替换一个下标的内容（§4.6）。
    * 下标不变，所以不会让任何快照解码错位 —— 前提是调用方已确认该下标无人引用。
+   * 只读字典直接拒绝写入。
    */
   replaceAt(index, text, type = TYPE.COMMON) {
+    if (this.#readOnly) throw new Error('字典版本高于插件，已转为只读')
     const old = this.#words[index]
     if (old === undefined) throw new RangeError(`字典下标越界：${index}`)
 

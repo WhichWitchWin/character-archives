@@ -78,19 +78,30 @@ export function formatConfidence({ source, truth = null, via = null } = {}) {
 
   if (source === SOURCE.OTHER && via !== null) {
     if (!Number.isInteger(via) || via < 0) return null
-    const suffix = truth === TRUTH.TRUE ? '+' : truth === TRUTH.FALSE ? '-' : ''
+    // 只有「未定」才允许省略后缀；拼错的真值一律返回 null，不许悄悄写成未定。
+    let suffix = ''
+    if (truth === TRUTH.TRUE) suffix = '+'
+    else if (truth === TRUTH.FALSE) suffix = '-'
+    else if (truth !== TRUTH.UNKNOWN && truth !== null) return null
     return `r${via}${suffix}`
   }
 
   return FIXED_CODE.get(`${source}:${truth}`) ?? null
 }
 
+const ORDER_KEYS = new Set(['turn', 'salience', 'truth', 'source'])
+
 /**
  * 比较两条同栏目条目，负数表示 a 该排前面（也就是该被保留）。
  * salienceOf(entry) 给出「来源关键度」：用户＝999999，在册人物按非空条目数，路人最低。
+ * order 来自设置页的拖动，脏数据（空的、含未知键）一律回落默认顺序 ——
+ * 静默判平会让稳定排序保留最旧的那条，等于关信度时把用户新写的值丢掉。
  */
 export function compareEntries(a, b, { order = DEFAULT_ORDER, salienceOf = () => 0 } = {}) {
-  for (const key of order) {
+  const keys = Array.isArray(order) && order.length > 0 && order.every((key) => ORDER_KEYS.has(key))
+    ? order
+    : DEFAULT_ORDER
+  for (const key of keys) {
     if (key === 'turn') {
       const diff = b[3] - a[3]
       if (diff) return diff

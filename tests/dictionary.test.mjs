@@ -86,10 +86,26 @@ test('读回落盘数据后反向索引能重建', () => {
   assert.equal(reloaded.encode(LONG), 0)
 })
 
-test('读回坏数据时退回空字典，不抛错', () => {
-  for (const raw of [null, undefined, {}, { d: 'x' }, { d: [1, 2], t: [] }]) {
+test('读回结构性坏数据时退回空字典，不抛错', () => {
+  for (const raw of [null, undefined, {}, { d: 'x' }]) {
     assert.equal(openDictionary(raw).size, 0)
   }
+})
+
+test('数组里的坏槽位保留占位，后面的下标绝不整体前移', () => {
+  const dict = openDictionary({ v: 1, d: ['老陈', '', '相濡以沫'], t: [1, 4, 4] })
+  assert.equal(dict.size, 3)                 // 长度不变
+  assert.equal(dict.decode(2), '相濡以沫')   // 2 号还是 2 号
+  assert.equal(dict.decode(1), null)          // 坏槽解出空
+  assert.equal(openDictionary({ d: [1, 2], t: [] }).size, 2)
+})
+
+test('字典版本高于当前时只读，不再写入新词', () => {
+  const dict = openDictionary({ v: 2, d: ['老陈'], t: [1] })
+  assert.equal(dict.readOnly, true)
+  assert.equal(dict.encode(LONG), LONG)       // 不新增，退回原文
+  assert.equal(dict.size, 1)
+  assert.equal(openDictionary({ v: 1, d: ['老陈'], t: [1] }).readOnly, false)
 })
 
 test('snapshot 是深拷贝，改它不影响字典本身', () => {

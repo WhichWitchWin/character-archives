@@ -58,6 +58,19 @@ test('format 拒绝拼不出来的组合', () => {
   assert.equal(formatConfidence({}), null)
 })
 
+test('format 不会把拼错的真值悄悄降级成「未定」', () => {
+  assert.equal(formatConfidence({ source: SOURCE.OTHER, truth: 'maybe', via: 42 }), null)
+  assert.equal(formatConfidence({ source: SOURCE.OTHER, truth: TRUTH.UNKNOWN, via: 42 }), 'r42')
+  assert.equal(formatConfidence({ source: SOURCE.OTHER, truth: TRUTH.FALSE, via: 42 }), 'r42-')
+})
+
+test('排序键不认识或为空时回落默认顺序，不静默判平', () => {
+  const older = entry('6', 10, '旧')
+  const newer = entry('6', 30, '新')
+  assert.ok(compareEntries(newer, older, { order: [] }) < 0)
+  assert.ok(compareEntries(newer, older, { order: ['triple'] }) < 0)
+})
+
 test('排序默认顺序与设计稿一致：轮次→来源关键度→真值→来源', () => {
   assert.deepEqual(DEFAULT_ORDER, ['turn', 'salience', 'truth', 'source'])
 })
