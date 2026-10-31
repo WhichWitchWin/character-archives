@@ -6,13 +6,15 @@
 //   - 整局数据 256 KB：>90% 触发一次全量扫描回收、95% 着重提示；**不停止收录**
 //   - 快照条数 2000：1900 提示、1999 删最早 100 份
 //
-// 三个上限别混：单条 64 KB / 每局 8 MB + 2000 条 / 整局数据 256 KB。
+// 水位统一返回对象而不是单个字符串档位：高档位同时带着低档位的动作 ——
+// 99% 既该拒写、也该清理，只回一个 'reject' 会让调用方漏掉清理。
+//
 // 纯逻辑模块：不 import 酒馆接口、不接触 ctx。
 
 export const CAPACITY = Object.freeze({
   SNAPSHOT_BYTES: 64 * 1024,          // 单条快照上限
   GAME_TOTAL_BYTES: 8 * 1024 * 1024,  // 每插件每局总量
-  GAME_DATA_BYTES: 256 * 1024,        // 整局数据上限（字典、锁、索引都在里面）
+  GAME_DATA_BYTES: 256 * 1024,        // 整局数据上限（字典、锁、索引、anchors、pending 都在里面）
   RECORD_LIMIT: 2000,                 // 每局快照条数上限
 
   SNAPSHOT_WARN_PERCENT: 95,          // 提示板记「人物册即将溢出」
@@ -32,33 +34,49 @@ export const CAPACITY = Object.freeze({
   RECORD_PRUNE_COUNT: 100,
 })
 
-/** 单条快照水位：'ok' | 'notice'(95) | 'urgent'(97，要给一键清理) | 'reject'(99) */
+/**
+ * 单条快照水位。
+ * @returns {{level:'ok'|'notice'|'urgent'|'reject', warn:boolean, needsClean:boolean, rejectWrites:boolean}}
+ */
 export function snapshotPressure(bytes, limit = CAPACITY.SNAPSHOT_BYTES) {
-  if (atLeast(bytes, limit, CAPACITY.SNAPSHOT_REJECT_PERCENT)) return 'reject'
-  if (atLeast(bytes, limit, CAPACITY.SNAPSHOT_CLEAN_PERCENT)) return 'urgent'
-  if (atLeast(bytes, limit, CAPACITY.SNAPSHOT_WARN_PERCENT)) return 'notice'
-  return 'ok'
+  const rejectWrites = atLeast(bytes, limit, CAPACITY.SNAPSHOT_REJECT_PERCENT)
+  const needsClean = rejectWrites || atLeast(bytes, limit, CAPACITY.SNAPSHOT_CLEAN_PERCENT)
+  const warn = needsClean || atLeast(bytes, limit, CAPACITY.SNAPSHOT_WARN_PERCENT)
+  const level = rejectWrites ? 'reject' : needsClean ? 'urgent' : warn ? 'notice' : 'ok'
+  return { level, warn, needsClean, rejectWrites }
 }
 
-/** 每局总量水位：'ok' | 'notice'(95，提示可压缩) | 'prune'(98，自动删最早 10 份) */
+/**
+ * 每局总量水位。
+ * @returns {{level:'ok'|'notice'|'prune', suggestCompact:boolean, autoPrune:boolean}}
+ */
 export function gameTotalPressure(bytes, limit = CAPACITY.GAME_TOTAL_BYTES) {
-  if (atLeast(bytes, limit, CAPACITY.GAME_TOTAL_PRUNE_PERCENT)) return 'prune'
-  if (atLeast(bytes, limit, CAPACITY.GAME_TOTAL_NOTICE_PERCENT)) return 'notice'
-  return 'ok'
+  const autoPrune = atLeast(bytes, limit, CAPACITY.GAME_TOTAL_PRUNE_PERCENT)
+  const suggestCompact = autoPrune || atLeast(bytes, limit, CAPACITY.GAME_TOTAL_NOTICE_PERCENT)
+  const level = autoPrune ? 'prune' : suggestCompact ? 'notice' : 'ok'
+  return { level, suggestCompact, autoPrune }
 }
 
-/** 整局数据水位：'ok' | 'scan'(>90，触发一次全量扫描回收) | 'urgent'(95，着重提示) */
+/**
+ * 整局数据水位（严格大于 90% 才扫描）。
+ * @returns {{level:'ok'|'scan'|'urgent', scan:boolean, urgent:boolean}}
+ */
 export function gameDataPressure(bytes, limit = CAPACITY.GAME_DATA_BYTES) {
-  if (atLeast(bytes, limit, CAPACITY.GAME_DATA_URGENT_PERCENT)) return 'urgent'
-  if (bytes * 100 > limit * CAPACITY.GAME_DATA_SCAN_PERCENT) return 'scan'
-  return 'ok'
+  const urgent = atLeast(bytes, limit, CAPACITY.GAME_DATA_URGENT_PERCENT)
+  const scan = urgent || bytes * 100 > limit * CAPACITY.GAME_DATA_SCAN_PERCENT
+  const level = urgent ? 'urgent' : scan ? 'scan' : 'ok'
+  return { level, scan, urgent }
 }
 
-/** 快照条数水位：'ok' | 'warn'(1900) | 'prune'(1999，删最早 100 份) */
+/**
+ * 快照条数水位。
+ * @returns {{level:'ok'|'warn'|'prune', warn:boolean, prune:boolean}}
+ */
 export function recordPressure(count) {
-  if (count >= CAPACITY.RECORD_PRUNE_AT) return 'prune'
-  if (count >= CAPACITY.RECORD_WARN) return 'warn'
-  return 'ok'
+  const prune = count >= CAPACITY.RECORD_PRUNE_AT
+  const warn = prune || count >= CAPACITY.RECORD_WARN
+  const level = prune ? 'prune' : warn ? 'warn' : 'ok'
+  return { level, warn, prune }
 }
 
 /**

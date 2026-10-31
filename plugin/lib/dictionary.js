@@ -3,14 +3,20 @@
 // 用整数下标代替号码：字典就是两个并行数组，下标即号码。
 // 值位置靠 JSON 类型区分：字符串＝原文，数字＝字典下标（§4.3）。
 //
-// 读存档的铁律：**下标就是号码，号码绝不能挪**。
-// 所以坏槽位一律保留占位（解出 null），绝不压缩数组 —— 压缩会让后面每个下标
-// 换一个内容，历史快照会解出语法正常、语义完全无关的句子（§4.6 亲口警告过的失效）。
+// 收录规则（ADR 0006 按「暂定 B」+「首次就收」定稿）：
+//   - 超过 8 个汉字 → 一律收，含数字也收（长句收益最大，别被一个「一」误杀）；
+//   - 4～8 个汉字 → 含数字的不收（时间/数量短语），其余首次出现就收；
+//   - 少于 4 个汉字、纯英文、纯标点、空白 → 不收；
+//   - 人名、地名、MVU 值 → 永不收录（姓名按原文存快照，§4.1）。
 //
-// 纯逻辑模块：不 import 酒馆接口、不接触 ctx，数据进数据出，本地可单测。
+// 读存档的铁律：**下标就是号码，号码绝不能挪**。坏槽位保留占位（解出 null），
+// 绝不压缩数组 —— 压缩会让后面每个下标换一个内容，历史快照会解出语法正常、
+// 语义完全无关的句子（§4.6 亲口警告过的失效）。
+//
+// 纯逻辑模块：不 import 酒馆接口、不接触 ctx。
 
 export const TYPE = Object.freeze({
-  PERSON: 1, // 人名 —— 不收录（人工只出现一次，收益小、麻烦多，§4.3）
+  PERSON: 1, // 人名 —— 不收录
   PLACE: 2,  // 地名 —— 不收录
   MVU: 3,    // MVU 值 —— 不收录
   COMMON: 4, // 常用词 —— 只有这一类会进字典
@@ -29,7 +35,7 @@ const DIGIT_CHAR = /[0-9０-９零〇一二三四五六七八九十百千万亿�
 
 /**
  * 这个词值不值得进字典。
- * @returns {'now' 首次出现就收 | 'second' 第二次出现才收 | 'never' 永不收录}
+ * @returns {'now' 首次出现就收 | 'never' 永不收录}
  */
 export function classify(text, type = TYPE.COMMON) {
   if (NEVER_COLLECT_TYPES.has(type)) return 'never'
@@ -40,13 +46,15 @@ export function classify(text, type = TYPE.COMMON) {
   // 纯英文、纯标点、纯符号：一个汉字都没有
   const chinese = value.match(CJK_CHAR)?.length ?? 0
   if (chinese === 0) return 'never'
-
-  if (DIGIT_CHAR.test(value)) return 'never'
+  if (chinese < 4) return 'never'
   if (STOPWORDS.has(value)) return 'never'
 
+  // 长句一律收：为一两个数字字符放弃整句，不划算
   if (chinese > 8) return 'now'
-  if (chinese >= 4) return 'second'
-  return 'never'
+
+  // 4～8 个汉字的短句里，含数字的多半是时间/数量短语，不收
+  if (DIGIT_CHAR.test(value)) return 'never'
+  return 'now'
 }
 
 /** 空字典的落盘形状。 */
@@ -73,7 +81,6 @@ class Dictionary {
   #types
   #readOnly
   #index = new Map()   // 文字 → 号码，重建后可 O(1) 查找
-  #seen = new Map()    // 还没收录的词出现过几次（内存态，不落盘）
 
   constructor(words, types, readOnly = false) {
     this.#words = words
@@ -110,15 +117,8 @@ class Dictionary {
     const existing = this.#index.get(key)
     if (existing !== undefined) return existing
 
-    const mode = classify(value, type)
-    if (mode === 'never') return value
+    if (classify(value, type) !== 'now') return value
     if (this.#readOnly) return value
-
-    if (mode === 'second') {
-      const times = (this.#seen.get(key) ?? 0) + 1
-      this.#seen.set(key, times)
-      if (times < 2) return value
-    }
 
     const index = this.#words.push(key) - 1
     this.#types[index] = type
@@ -144,6 +144,7 @@ class Dictionary {
   /**
    * 可以回收的下标：任何现存快照都没引用它（§4.6）。
    * 升序返回 —— 因为新增即 push，排在前面的就是最早收录的。
+   * 信度位用的是人物编号（ADR 0004），所以引用集只来自「值位置」的数字。
    */
   unusedSlots(referenced = new Set()) {
     const used = referenced instanceof Set ? referenced : new Set(referenced)

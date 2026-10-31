@@ -27,6 +27,9 @@ export function createGameState() {
     dict: { v: 1, d: [], t: [] },
     flags: { status: {}, lock: {}, hidden: {} },
     snapshots: { index: [] },
+    anchors: {},              // ADR 0005 在场名单（临时结构，做「在场人物进快照」时要删）
+    pending: [],              // ADR 0005 暂存批：同一轮的值共享一条 gt
+    notice: { v: 1, items: [] }, // 提示记录（容量事件与每轮动作）
   }
 }
 

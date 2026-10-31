@@ -1,20 +1,21 @@
-// 人物冷存档 · 快照结构（设计稿 §4.1 字段、§4.8 版本与迁移策略）
+// 人物冷存档 · 快照结构（设计稿 §4.1 字段、§4.8 版本与迁移、ADR 0005 的 gt）
 //
 // 快照是整个插件唯一按轮保存的东西（saveTurnData，每条 ≤ 64 KB）。
 // 它刻意用「短键 + 数组」而不是对象：字段名占的字节也算在 64 KB 里。
 //
 // 结构（字段顺序永不改变，新字段一律加在末尾）：
-//   { "v": 1, "t": 40, "p": [ 人物... ] }
+//   { "v": 1, "t": 40, "p": [ 人物... ], "gt": "三年五月十二日" }
 //   人物 = ["p7", 状态, "姓名", [条目...], "召回词串"]
-//   条目 = ["a", 值, "信度位", 轮次]
+//   条目 = ["a", 值, "信度位", 轮次]          ← 当轮写入
+//   条目 = ["a", 值, "信度位", 轮次, "gt"]    ← 延后写入，自带捕获时的游戏时间
 //
 // 值位置靠 JSON 类型区分：字符串＝原文，数字＝字典下标（见 dictionary.js）。
-// **姓名按原文存放、不进字典**（§4.1）—— 这一点很关键：回退到改名之前的那份快照时，
+// **姓名按原文存放、不进字典**（§4.1）—— 回退到改名之前的那份快照时，
 // 看到的自然是当时的旧名字，不会剧透后来的新名字（ADR 0004）。
 //
 // 读到坏东西的策略（§4.8「不清空、不覆盖」）：
-//   - 顶层结构坏了（不是对象 / 没有 p）→ 整份拒绝，调用方不许覆盖存档；
-//   - 单个坏人物、单条坏条目 → **只丢那一个**，其余照常读出，并记进 problems。
+//   - 顶层结构坏了 → 整份拒绝，调用方不许覆盖存档；
+//   - 单个坏人物 / 坏条目 / 解不开的字典下标 → **只丢那一个**，其余照常读出，记进 problems。
 //
 // 纯逻辑模块：不 import 酒馆接口、不接触 ctx。
 
@@ -33,25 +34,33 @@ export const STATUS = Object.freeze({
 const PERSON_FIELDS = 5
 const ENTRY_FIELDS = 4
 
-export function createSnapshot(turn) {
-  return { v: SNAPSHOT_VERSION, t: turn, p: [] }
+export function createSnapshot(turn, gt = '') {
+  return { v: SNAPSHOT_VERSION, t: turn, p: [], gt }
 }
 
 export function createPerson(id, status, name, entries = [], triggers = '') {
   return [id, status, name, entries, triggers]
 }
 
-export function createEntry(code, value, confidence, turn) {
-  return [code, value, confidence, turn]
+/**
+ * 条目：4 元素；给了 gt 才是 5 元素。
+ * 空 gt 一律省略 —— 60 个值 × 2000 份快照，空串占位会白扔约 360 KB。
+ */
+export function createEntry(code, value, confidence, turn, gt = '') {
+  const entry = [code, value, confidence, turn]
+  if (gt) entry.push(gt)
+  return entry
 }
 
 /**
  * 校验并读入一份快照。
+ * @param {object} raw 落盘的快照
+ * @param {{dict?: {decode: (value:number)=>string|null}}} options
+ *   传了 dict 就顺带核对字典下标：越界、或者字典是空的，就把这条值甩掉（空字典不放行）。
  * @returns {{ok: true, snapshot: object, reason: null, problems: string[]}
  *          | {ok: false, snapshot: null, reason: string, problems: string[]}}
- * reason 为 'upgrade-required' 时表示快照版本高于插件：只可只读展示，不可召回与写入（§4.8）。
  */
-export function readSnapshot(raw) {
+export function readSnapshot(raw, { dict = null } = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('快照不是对象')
   if (!Number.isInteger(raw.v) || raw.v < 1) return fail('结构版本 v 不是正整数')
   if (raw.v > SNAPSHOT_VERSION) return { ok: false, snapshot: null, reason: 'upgrade-required', problems: [] }
@@ -59,14 +68,19 @@ export function readSnapshot(raw) {
   if (!Array.isArray(raw.p)) return fail('人物列表 p 不是数组')
 
   const problems = []
+  let gt = ''
+  if (raw.gt === undefined || raw.gt === null) gt = ''
+  else if (typeof raw.gt === 'string') gt = raw.gt
+  else problems.push('快照头的时间不是字符串，已当作空')
+
   const people = []
   for (const person of raw.p) {
-    const copy = readPerson(person, problems)
+    const copy = readPerson(person, problems, dict)
     if (copy) people.push(copy)
   }
 
   // 顶层与人物都整份复制：读回来的东西随便改，不会反噬存档对象。
-  return { ok: true, snapshot: { ...raw, v: raw.v, t: raw.t, p: people }, reason: null, problems }
+  return { ok: true, snapshot: { ...raw, v: raw.v, t: raw.t, p: people, gt }, reason: null, problems }
 }
 
 /**
@@ -80,7 +94,7 @@ export function findPerson(snapshot, id) {
   return snapshot.p.find((person) => Array.isArray(person) && person[0] === id) ?? null
 }
 
-function readPerson(person, problems) {
+function readPerson(person, problems, dict) {
   if (!Array.isArray(person) || person.length < PERSON_FIELDS) {
     problems.push('有一个人物不是 5 元素以上的数组，已跳过')
     return null
@@ -110,7 +124,7 @@ function readPerson(person, problems) {
 
   const copiedEntries = []
   for (const entry of entries) {
-    const copy = readEntry(entry)
+    const copy = readEntry(entry, dict)
     if (copy) copiedEntries.push(copy)
     else problems.push(`人物 ${id} 有一条条目结构不对，已跳过`)
   }
@@ -120,20 +134,26 @@ function readPerson(person, problems) {
   return copy
 }
 
-function readEntry(entry) {
+function readEntry(entry, dict) {
   if (!Array.isArray(entry) || entry.length < ENTRY_FIELDS) return null
 
   const [code, value, confidence, turn] = entry
   if (typeof code !== 'string' || !code) return null
-  // 值位置：字符串＝原文，数字＝字典下标。下标必须是非负的安全整数，
-  // 否则 decode 会静默变成空白（越界核对由「快照 + 字典」那一层做）。
+
+  // 值位置：字符串＝原文，数字＝字典下标。下标必须是非负安全整数。
   const isText = typeof value === 'string'
   const isIndex = Number.isSafeInteger(value) && value >= 0
   if (!isText && !isIndex) return null
+  // 传了字典就核对：解不出文字（越界 / 字典为空）就把这条值甩掉，免得静默变成空白。
+  if (isIndex && dict && typeof dict.decode(value) !== 'string') return null
+
   // 信度位不只要"是字符串"，还得语法合法 —— 否则坏码会安静躺着，
   // 直到关闭信度那天被当成坏值丢掉，中间没有任何记录。
   if (typeof confidence !== 'string' || !parseConfidence(confidence)) return null
   if (typeof turn !== 'number') return null
+
+  // 第 5 位是可选 gt：有就必须是字符串
+  if (entry.length > ENTRY_FIELDS && typeof entry[4] !== 'string') return null
 
   return [...entry]
 }
