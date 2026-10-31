@@ -1,0 +1,19 @@
+{
+  "name": "dsh-tavern-npc-archives",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "人物冷存档：把离场的非龙套人物收进人物册，按需召回；人物回场则冻结。",
+  "exports": {
+    ".": "./index.mjs",
+    "./client": "./client.js"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "dsh-tavern-plugin"
+      ]
+    }
+  }
+}

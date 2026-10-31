@@ -1,0 +1,14 @@
+node_modules/
+
+# 酒馆加载插件时自动生成，不要改、不要提交
+.tavern-entry.mjs
+
+# 本地调试产物
+.tmp/
+temp/
+*.log
+
+# 系统垃圾
+Thumbs.db
+.DS_Store
+desktop.ini
