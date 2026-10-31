@@ -1,4 +1,4 @@
-﻿import { test } from 'node:test'
+import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
@@ -12,7 +12,7 @@ import {
 
 test('默认值与设计稿 §8.6 一致', () => {
   assert.equal(DEFAULT_SETTINGS.firstExit.mode, 'auto')
-  assert.equal(DEFAULT_SETTINGS.firstExit.nominationTurns, 5)
+  assert.equal(DEFAULT_SETTINGS.firstExit.nominationTurns, 3)
   assert.equal(DEFAULT_SETTINGS.firstExit.fuzzyTurns, 3)
   assert.equal(DEFAULT_SETTINGS.confidence.enabled, true)
   assert.equal(DEFAULT_SETTINGS.confidence.reopenAs, '7')

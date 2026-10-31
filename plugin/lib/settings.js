@@ -12,7 +12,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   firstExit: Object.freeze({
     mode: 'auto',              // 'auto' 自动写入 | 'manual' 手动写入
     confirmAmbiguous: false,   // 勾选后模糊离场先挂 3 轮待确认
-    nominationTurns: 5,        // 手动写入的提名停留轮数（1～10）
+    nominationTurns: 3,        // 手动写入的提名停留轮数（1～5）
     fuzzyTurns: 3,             // 模糊离场判定轮数（1～5）
   }),
 

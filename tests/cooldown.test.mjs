@@ -66,6 +66,14 @@ test('到期即删：只留还没到期的', () => {
   assert.equal(pruned['p:晚'].until, 23)
 })
 
+test('归档缓冲：以最后一次在场轮为基准，不是判定轮或写入轮', () => {
+  // 最后在场第 10 轮；第 13 轮才判定离场；第 16 轮才真正写进快照。缓冲 10 轮。
+  const cooldowns = rememberRecall(createCooldowns(), personKey('p7'), 10, 10)
+  assert.equal(isCoolingDown(cooldowns, personKey('p7'), 13), true)  // 判定轮仍在缓冲
+  assert.equal(isCoolingDown(cooldowns, personKey('p7'), 19), true)  // 写入轮之后仍在缓冲
+  assert.equal(isCoolingDown(cooldowns, personKey('p7'), 20), false) // 距最后在场满 10 轮，恢复召回
+})
+
 test('是纯函数，不改原对象；记第二次会覆盖', () => {
   const original = rememberRecall(createCooldowns(), 'p:p1', 10, 5)
   rememberRecall(original, 'p:p1', 30, 5)
