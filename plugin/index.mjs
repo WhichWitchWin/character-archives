@@ -25,9 +25,14 @@ export function createGameState() {
     v: DATA_VERSION,
     meta: { updatedTurn: null, updatedAt: null },
     dict: { v: 1, d: [], t: [] },
+    // 该局的条目定义：码 → { name, prompt, unique, mode }（ADR 0008）
+    // 放整局数据而不是快照：每条约 50 字节，2000 份快照各带一份会撑爆 8 MB 上限。
+    entries: {},
     flags: { status: {}, lock: {}, hidden: {} },
     snapshots: { index: [] },
     anchors: {},              // ADR 0005 在场名单（临时结构，做「在场人物进快照」时要删）
+    nextId: 1,                // 人物编号计数器（ADR 0004：号码永不复用）
+    cooldowns: {},            // 召回冷却 + 归档缓冲（ADR 0005 / 临时文档第十节）
     pending: [],              // ADR 0005 暂存批：同一轮的值共享一条 gt
     notice: { v: 1, items: [] }, // 提示记录（容量事件与每轮动作）
   }
