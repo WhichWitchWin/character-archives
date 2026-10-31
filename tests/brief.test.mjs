@@ -145,8 +145,7 @@ test('同一个值不会在简版里出现两次', () => {
   assert.equal(result.parts.top, null)
 })
 
-test('四层拼成一行', () => {
-  const entries = [
+test('四层拼成一行', () => {  const entries = [
     entry('a', '老陈', '6'),
     entry('b', '受伤', '9'),
     entry('c', '旧友', 'rp2'),
@@ -162,4 +161,34 @@ test('四层拼成一行', () => {
   })
   assert.equal(result.text, '老陈·受伤·旧友·欠账')
   assert.equal(result.chars, 11)   // 2+1+2+1+2+1+2
+})
+
+test('最后确认轮次强制带，跟在行尾', () => {
+  const result = buildBrief({
+    entries: [entry('a', '老陈', '6')],
+    checkedCodes: new Set(['a']),
+    uniqueCodes: new Set(['a']),
+    presentIds: new Set(),
+    textOf,
+    confirmTurn: 20,
+  })
+  assert.equal(result.text, '老陈·第20轮')
+})
+
+test('什么都没勾时，轮次也照样带', () => {
+  const result = buildBrief({
+    entries: [],
+    checkedCodes: new Set(),
+    uniqueCodes: new Set(),
+    presentIds: new Set(),
+    textOf,
+    confirmTurn: 20,
+  })
+  assert.equal(result.text, '第20轮')
+  assert.equal(result.chars, 4)
+})
+
+test('没给轮次就不加', () => {
+  const result = buildBrief({ entries: [], checkedCodes: new Set(), uniqueCodes: new Set(), presentIds: new Set(), textOf })
+  assert.equal(result.text, '')
 })

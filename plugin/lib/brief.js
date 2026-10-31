@@ -51,6 +51,7 @@ export function buildBrief({
   order = undefined,
   salienceOf = undefined,
   rng = Math.random,
+  confirmTurn = null,
 } = {}) {
   const candidates = entries.filter((entry) => checkedCodes.has(entry[0]))
   const used = new Set()
@@ -98,6 +99,9 @@ export function buildBrief({
   }
 
   const picked = [...unique, ...mvu, ...(top ? [top] : []), ...(extra ? [extra] : [])]
-  const text = picked.map(textOf).join('·')
+  const parts = picked.map(textOf)
+  // 最后确认轮次是派生字段（取 anchors 记的最后在场轮），不是条目；强制带，放在行尾。
+  if (Number.isFinite(confirmTurn)) parts.push(`第${confirmTurn}轮`)
+  const text = parts.join('·')
   return { text, chars: [...text].length, mvuChars, parts: { unique, mvu, top, extra } }
 }
