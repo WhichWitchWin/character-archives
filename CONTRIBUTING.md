@@ -70,12 +70,24 @@ node --test tests/settings.test.mjs   # 只跑一个文件
 
 | 段 | 交付 | 状态 |
 |---|---|---|
-| M1 骨架 | 插件能加载、面板能显示、整局数据能读写 | ✅ 宿主侧已实测 `ok:true` |
+| M1 骨架 | 插件能加载、面板能显示、整局数据能读写 | ✅ 已完成（2026-10-31 实测） |
 | M2 能存 | 快照 `v/t/p`、字典 `d/t`、信度位、容量水位 | 待做 |
 | M3 能召回 | 匹配 + 打分 + 字数预算 + 冷却，正文前注入 | 待做 |
 | M4 能改 | 结算派活给常驻成员 → 校验 → 落盘；面板编辑 | 待做 |
 
 M2 起 `plugin/lib/` 按需增加：`snapshot.js`、`dictionary.js`、`confidence.js`、`recall.js`、`capacity.js`、`prompts.js`。**不提前建空文件。**
+
+### 已验证的平台事实（实测，不是推测）
+
+| 事实 | 证据 |
+|---|---|
+| 插件文件夹放进 `plugins/` 后，酒馆几秒内自动登记并加载，不用重启 | `.tavern-status.json` = `{"ok":true}`；`cordis.patch.yml` 出现 `tavern-user-plugin-dsh-tavern-npc-archives` |
+| `onTurnSettled` 在正常结算下每轮触发 | 面板显示「最近结算轮次：第 3 轮」 |
+| `saveGameData` / `readGameData` 与 `handle` / `callHost` 通路可用 | 浏览器侧读到了宿主侧写入并存的轮次 |
+| `client.js` 改完复制后，刷新页面即显示新内容 | 侧栏面板与「记录」区出现在页面上 |
+| `plugins/` 下**不能**用 junction / 符号链接 | 见上节，`isDirectory() === false` 被扫描过滤 |
+
+尚未验证（留到需要时再测）：`onTurnSettled` 在玩家关掉全部后台结算时是否真的不触发（设计稿 §10.1 的说法）。
 
 ## 设计变更怎么记（ADR）
 
