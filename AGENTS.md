@@ -2,7 +2,7 @@
 
 ## 这是一个什么项目
 
-DSH Tavern 的第三方插件「人物冷存档」。插件本体在 `plugin/`，设计文档在 `docs/`。
+DSH Tavern 的第三方插件「NPC档案馆」（`dsh-tavern-npc-archives`）。插件本体在 `plugin/`，设计文档在 `docs/`。
 
 **动手前先读**：`docs/人物冷存档插件-设计稿.md`（唯一权威）、`docs/交接说明-人物冷存档.md`（接手必读的六件事）。
 

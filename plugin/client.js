@@ -1,7 +1,7 @@
 // 人物冷存档 · 浏览器侧（M1 骨架）
 //
 // 两个入口（设计稿 §8.1、§3.5）：
-//   - 侧栏「人物档案馆」面板：registerPanel
+//   - 侧栏「NPC档案馆」面板：registerPanel
 //   - 「酒馆状态」页一节的记录区：registerStatusSection
 //
 // 本文件由浏览器直接加载，不打包；改完几秒内自动生效。
@@ -75,15 +75,15 @@ window.__ModuleLoader__.load({
         const { tavernUi } = ctx
         if (!(tavernUi.apiVersion >= 3)) return
 
-        // 侧栏「人物档案馆」
+        // 侧栏「NPC档案馆」
         tavernUi.registerPanel({
           id: 'npc-archives',
-          title: '人物档案馆',
+          title: 'NPC档案馆',
           render: ({ gameId }) =>
             h(
               'div',
               { style: { padding: 12, display: 'flex', flexDirection: 'column', gap: 10 } },
-              h('div', { style: { fontWeight: 600 } }, '人物档案馆'),
+              h('div', { style: { fontWeight: 600 } }, 'NPC档案馆'),
               h(SummaryBlock, { tavernUi, gameId, detailed: true }),
             ),
         })
