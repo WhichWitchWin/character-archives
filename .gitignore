@@ -15,3 +15,15 @@ temp/
 Thumbs.db
 .DS_Store
 desktop.ini
+
+# 插件自持数据（快照/整局数据的文件存储，不进仓库）
+plugin/data/
+
+# 开发中备份（本机产物，不入库；要回退看 git 提交）
+backups/
+
+# 本机脚本目录。
+# 注意：install-dev.mjs / sync-prompt.mjs **已经在仓库里**，这一行拦不住它们
+# （gitignore 只对未跟踪文件生效），它们继续被跟踪、继续被 npm run install:dev 用。
+# 真正会被忽略的是 restart-dsht.cmd / .ps1 —— 它跟具体机器的路径绑定，别人拉下来也用不了。
+scripts/
