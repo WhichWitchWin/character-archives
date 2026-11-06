@@ -70,12 +70,52 @@ jobs:
           path: character-archives.zip
           if-no-files-found: error
 
-      # 用 gh 而不是第三方 action：少一个供应链依赖
-      - name: Attach zip to release
+      # Release 正文从 CHANGELOG.md 里抽「当前版本」那一段。
+      # 为什么不用 gh 的 --generate-notes：它只会给一句 Full Changelog 链接，等于没有更新说明。
+      # 抽取按字面前缀匹配（index == 1），所以 0.1.0 不会误匹配 0.1.00。
+      - name: Build release body
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v ver="$version" '
+            index($0, "## [" ver "]") == 1 { on = 1; next }
+            on && index($0, "## [") == 1 { exit }
+            on { print }
+          ' CHANGELOG.md > /tmp/changelog-section.md
+          if [ ! -s /tmp/changelog-section.md ]; then
+            echo "::error::CHANGELOG.md 里找不到 '## [$version]' 这一段——发版前先把这一版写进 CHANGELOG.md"
+            exit 1
+          fi
+          {
+            echo '## 安装'
+            echo
+            echo '1. 下载下面的 `character-archives.zip`（不用解压）'
+            echo '2. 酒馆里打开 **设置 → 酒馆插件 → 上传 ZIP**，选中这个文件'
+            echo '3. 宿主侧几秒内加载，刷新浏览器就能在侧栏看到'
+            echo
+            echo '> ⚠️ **全新安装**会自动加载；**覆盖升级**后旧模块还在内存里，必须重启 DSH 才会换成新代码。'
+            echo
+            cat /tmp/changelog-section.md
+            echo
+            echo '---'
+            echo
+            echo '许可证：[代码 GPL-3.0-or-later](https://github.com/'"$GITHUB_REPOSITORY"'/blob/main/LICENSE)，[文档 CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.zh-hans)。用代码或参考设计请署名，详见 [NOTICE](https://github.com/'"$GITHUB_REPOSITORY"'/blob/main/NOTICE)。'
+          } > release-body.md
+          echo "正文 $(wc -c < release-body.md) 字节"
+
+      - name: Create or update release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
-            || gh release create "$GITHUB_REF_NAME" --generate-notes --title "$GITHUB_REF_NAME"
-          gh release upload "$GITHUB_REF_NAME" character-archives.zip --clobber
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --notes-file release-body.md
+          else
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file release-body.md
+          fi
+
+      - name: Upload zip to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" character-archives.zip --clobber

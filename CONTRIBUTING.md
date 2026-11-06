@@ -155,14 +155,18 @@ docs/adr/0014-简短标题.md
 ```bash
 # 1. 先改版本号（插件本体那份）
 #    plugin/package.json → "version": "0.2.0"
-# 2. 提交
+# 2. 在 CHANGELOG.md 顶部加一段（格式必须是 "## [0.2.0] — 日期"）
+#    ← CI 拿这一段当 Release 正文，缺了会直接失败
+# 3. 提交
 git commit -am "chore: 版本 0.2.0"
-# 3. 打标签并推（标签必须与 plugin/package.json 的版本一致，CI 会校验）
+# 4. 打标签并推（标签必须与 plugin/package.json 的版本一致，CI 会校验）
 git tag v0.2.0
 git push origin main --tags
 ```
 
-CI 会依次：跑全量测试 → 校验标签与版本一致 → 打包 → 校验 zip 根部有 `package.json` → 上传 Artifact → 把 zip 挂到 GitHub Release。
+CI 会依次：跑全量测试 → 校验标签与版本一致 → **从 `CHANGELOG.md` 抽出 `## [0.2.0]` 那段拼成 Release 正文** → 打包 → 校验 zip 根部有 `package.json` → 上传 Artifact → 建/更新 Release 并挂上 zip。
+
+> 为什么要单独写 CHANGELOG：GitHub 自带的 `--generate-notes` 只会给一句「Full Changelog」链接，等于没有更新说明。所以 Release 正文由 `CHANGELOG.md` 驱动——**发版前没写那一版，CI 就失败**。
 
 只想拿一个包、不发版：推到 `main` 后到 Actions 页面下载 `character-archives` 这个 Artifact。
 
