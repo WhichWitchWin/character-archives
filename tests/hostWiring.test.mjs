@@ -451,3 +451,25 @@ test('预设提示词：保存时按 40 字封顶', () => {
   const body = handleBody('presets-save')
   assert.ok(body.some((line) => line.includes('MAX_ENTRY_PROMPT_CHARS')), 'presets-save 要按这个上限校验')
 })
+
+// ── archive_query：使用时机提示 + 每轮限次（2026-11-06）──
+// 模型"不太会用"这个工具：描述只说"想不起某人知道什么就查"，没讲时机。
+// 又不限制次数 → 可能一轮狂查把预算打满。
+test('archive_query：描述里写了什么时候用、什么时候不用', () => {
+  const at = source.indexOf("name: 'archive_query'")
+  assert.ok(at >= 0, '找不到 archive_query')
+  const block = source.slice(at, at + 1400)
+  assert.ok(block.includes('什么时候用'), '要写清使用时机')
+  assert.ok(block.includes('不用查'), '要写清什么时候不用查')
+  assert.ok(/最多查\s*2\s*次/.test(block), '要告诉模型每轮最多查 2 次')
+})
+
+test('archive_query：每轮最多调用 2 次', () => {
+  const budget = readFileSync(fileURLToPath(new URL('../plugin/lib/queryBudget.js', import.meta.url)), 'utf8')
+  assert.match(budget, /export const MAX_QUERY_PER_TURN = 2\b/u, '上限常量在纯逻辑模块里')
+  assert.match(source, /createQueryCounter\(/u, 'index.mjs 要用这个计数器')
+  const at = source.indexOf("name: 'archive_query'")
+  const block = source.slice(at, at + 2600)
+  assert.ok(block.includes('queryCounter.take('), 'execute 里要按上限拦')
+  assert.ok(block.includes('查得太频繁'), '超限要回一句人话，而不是静默失败')
+})

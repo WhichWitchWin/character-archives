@@ -285,3 +285,10 @@ test('提示词：加粗不过量，且比手改版更短', () => {
   assert.ok(boldPairs <= 20, `加粗还有 ${boldPairs} 处，太多了`)
   assert.ok(txt.length < 5804, `还有 ${txt.length} 字，没比手改版（5804）短`)
 })
+
+// 索引词上限放开到 0～3（2026-11-06）。原来 0～2，长命题常有两个地名抽不进去。
+test('提示词：索引词上限是 0～3', () => {
+  const txt = systemText()
+  assert.ok(txt.includes('0～3 个'), '上限要改成 3')
+  assert.ok(!txt.includes('0～2 个'), '旧上限要清掉')
+})

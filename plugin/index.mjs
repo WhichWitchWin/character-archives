@@ -21,7 +21,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 
 import { SNAPSHOT_VERSION, readOrCreateSnapshot, readSnapshot, resolveTurn, STATUS } from './lib/snapshot.js'
 import { mergeSettings, resolveSettings, splitSettings } from './lib/settings.js'
-import { properNounsOf, wordsOfClaim, filterIndexWords, withClaimWords } from './lib/indexWords.js'
+import { properNounsOf, wordsOfClaim, filterIndexWords, withClaimWords, configureWordSegmenter } from './lib/indexWords.js'
 import { buildWriteMaterial } from './lib/writeMaterial.js'
 import { applyWriteActions } from './lib/writeActions.js'
 import { addGlobalWords, globalWordList, normalizeGlobalWords } from './lib/globalWords.js'
@@ -44,6 +44,7 @@ import { parseJudgePayload, parseWritePayload, parseWritePayloadBundle } from '.
 import { knownPlaces, resolvePlace } from './lib/place.js'
 import { checkText, NAME_MAX } from './lib/inputLimit.js'
 import { beginMemberRun, endMemberRun, submitMemberPayload } from './lib/memberBox.js'
+import { createQueryCounter } from './lib/queryBudget.js'
 import { applyRetractions } from './lib/retract.js'
 import { claimsOfPerson, filterDeletedPersonActions, pointersOfPerson, splitPersons, idSet } from './lib/deleted.js'
 import { pruneFutureFlags } from './lib/rollback.js'
@@ -113,6 +114,9 @@ try {
   const dictText = readFileSync(new URL('./assets/dict/zh.txt', import.meta.url), 'utf8')
   segmenter = createSegmenter({ dictText })
   configureSegmenter(segmenter)
+  // 同一只分词器也交给「程序自动抽词」：召回时用它把命题值分出通用词，
+  // 模型只负责专名（见 lib/indexWords.js 的 autoWordsOf）
+  configureWordSegmenter(segmenter)
   console.log(`[人物档案馆] 分词词表已加载：${segmenter.size} 词`)
 } catch (error) {
   console.warn('[人物档案馆] 词表加载失败，退回字串匹配', error?.message ?? error)
@@ -612,6 +616,12 @@ function freshBox() {
 
 /** 交卷工具说明共用一份：子代理档与后台成员档注册的是同一个契约（ADR 0092/0102）。 */
 const SUBMIT_TOOL_DESCRIPTION = '提交本轮的动作。一次交一个对象：判人五块 {回头测试,建档,改状态,改名,模糊建档} + 命题数组 {命题:[{关于,栏目,值,认知}]} + 可选撤回块 撤回:[{谁,序号}]；本局有约定栏目时认知还要带约定字段，规则见系统提示词的「约定状态」段。没有要做的就交 {}。'
+
+/**
+ * 「这一轮查了几次」的账本（纯逻辑在 lib/queryBudget.js，见那里的说明）。
+ * 每轮上限 2 次：不限制的话模型能连查十几次，把上下文预算吃光。
+ */
+const queryCounter = createQueryCounter()
 
 /**
  * 拿到这一局的常驻子代理（没有就建）。
@@ -1387,7 +1397,18 @@ export function apply(ctx) {
   if (typeof ctx.tools?.register === 'function') {
     const dispose = ctx.tools.register({
       name: 'archive_query',
-      description: '查人物档案：按名字拉出这个角色「知道的事」（认知指针）。写正文时想不起某人知道什么，就查一下。',
+      description: [
+        '查人物档案：按名字拉出这个角色「知道的事」（他知道什么、信不信、听谁说的）。',
+        '',
+        '什么时候用：',
+        '· 要写某个已建档人物的台词或反应，但不确定他知不知道最近发生的事 → 查他',
+        '· 要写「他还记得吗」「他知不知道」这类情节 → 查他',
+        '· 他离场很久、你不太记得他的近况 → 查他',
+        '· 发现自己正在猜「这个人应该知道吧」→ 别猜，查一下',
+        '',
+        '不用查：他就在场且上一轮刚聊过他的事；或者你只是想确认他叫什么。',
+        '每一轮最多查 2 次，第 3 次会被拒绝——先挑最需要的那两个人。',
+      ].join('\n'),
       parameters: {
         type: 'object',
         properties: {
@@ -1414,6 +1435,11 @@ export function apply(ctx) {
 
           const turn = state.meta?.updatedTurn
           if (!Number.isInteger(turn)) return '这一局还没结算过，档案还没建起来。'
+
+          // 每轮最多查 2 次：先记账再查，超了直接回一句人话（静默失败会让模型以为查到了）
+          if (!queryCounter.take(gameId, turn)) {
+            return `这一轮已经查过 ${queryCounter.limit} 次档案了，查得太频繁。先用已经拿到的信息写，下一轮再查。`
+          }
           const { snapshot } = await readSnapshotAt(ctx, gameId, turn)
 
           const level = normalizeLevel(args?.档位, normalizeLevel(settings.recall?.queryLevel, 'detailed'))
