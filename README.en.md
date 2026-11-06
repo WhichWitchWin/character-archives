@@ -195,6 +195,24 @@ Not yet.
 - **Tests**: 803 passing (`npm test`)
 - **Zero runtime dependencies**: no `dependencies` in `plugin/`
 - **Not implemented**: cross-plugin API, same-name different-person, standalone preset import/export, in-game time for non-MVU cards
-- **No license yet**: marked `private: true`, for local use only
 
 Per-version acceptance criteria and remaining work: [docs/ROADMAP.md](docs/ROADMAP.md).
+
+---
+
+## License
+
+**Code and documentation are licensed separately:**
+
+| Scope | License | What you must do |
+|---|---|---|
+| **Code** (`plugin/`, `scripts/`, `tests/`) | [GPL-3.0-or-later](LICENSE) | Keep the copyright notice; **if you distribute a modified version, you must release your changes under the GPL too**; state what you changed |
+| **Documentation** (`docs/`, README, CONTRIBUTING, AGENTS) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | **Credit WhichWitchWin**, link the license, and indicate whether you made changes |
+
+Full details and **exact attribution wording** are in [NOTICE](NOTICE).
+
+> ⚠️ **One honest caveat**: copyright protects *expression*, not *ideas*.
+> If someone reads these design documents, understands the approach, and writes their own implementation from scratch, that is not infringement—no license can prevent it.
+> What CC BY 4.0 does enforce is attribution when the **text itself** is copied or adapted.
+
+Third-party: the tokenizer dictionary under `plugin/assets/dict/` comes from jieba (MIT) and is **not** covered by the dual license above; see `LICENSE-jieba.txt` in that folder.

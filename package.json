@@ -1,6 +1,7 @@
 {
   "name": "character-archives-workspace",
   "version": "0.0.0",
+  "license": "GPL-3.0-or-later",
   "private": true,
   "type": "module",
   "description": "人物档案馆（DSH Tavern 插件）的开发工作区：插件本体在 plugin/",

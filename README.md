@@ -193,6 +193,24 @@ scripts/           开发脚本（装到酒馆、同步提示词副本）
 - **测试**：803 个用例全过（`npm test`）
 - **零运行时依赖**：`plugin/` 里没有 `dependencies`
 - **还没做**：跨插件接口、同名不同人、栏目预设单独导入导出、非 MVU 卡的游戏内时间
-- **未附开源许可证**：当前标 `private: true`，仅供本地使用
 
 各版本的验收标准与待办见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+
+---
+
+## 许可证
+
+**代码与文档分别授权**：
+
+| 范围 | 许可证 | 你要做的事 |
+|---|---|---|
+| **代码**（`plugin/`、`scripts/`、`tests/`） | [GPL-3.0-or-later](LICENSE) | 保留版权声明；**修改后分发必须以 GPL 开源你的修改**；标注你改了什么 |
+| **文档**（`docs/`、README、CONTRIBUTING、AGENTS） | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.zh-hans) | **署名** WhichWitchWin、附许可证链接、注明有没有改动 |
+
+完整说明与**具体署名写法**见 [NOTICE](NOTICE)。
+
+> ⚠️ **一句话提醒**：版权保护的是「文字怎么写」，不保护「想法」。
+> 别人读你的设计、理解思路后自己重写一份实现，法律上不构成侵权——任何许可证都管不到。
+> CC BY 4.0 能强制的是：**抄写或改编这些文字**时必须署名。
+
+第三方资源：`plugin/assets/dict/` 下的分词词典来自 jieba（MIT），不适用上述双许可，见同目录 `LICENSE-jieba.txt`。

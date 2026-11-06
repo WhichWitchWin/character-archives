@@ -1,6 +1,7 @@
 {
   "name": "character-archives",
   "version": "0.1.0",
+  "license": "GPL-3.0-or-later",
   "private": true,
   "type": "module",
   "description": "人物档案馆：把非龙套人物收进人物册，每轮把在场人物「他知道什么」按需注入正文；离场不召回。",
