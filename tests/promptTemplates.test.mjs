@@ -187,13 +187,16 @@ test('提示词：教了撤回怎么用、不许替别人撤，且「关于」�
 // 守卫：两类命题的原句「与亲见设置无关，永远这么判」把界线扩到了整段，
 // 会架空 ADR 0103 默认关的亲见口径；「不受默认态度影响」又让 defaultAttitude 对推断类失效。
 // 只保留「推断不能因看见就给真」这条不受设置影响，其余一律听【认知口径】。
-test('提示词：态度口径优先级写清，不架空亲见设置与默认态度', () => {
+test('提示词：态度口径优先级写清，且口径真的跟着默认态度变', async () => {
   const txt = systemText()
   assert.ok(txt.includes('按【认知口径】判'), '可观察事实的态度要归口径管')
   assert.ok(txt.includes('看不出来按【认知口径】给'), '推断类看不出来时要回落到口径的默认态度')
   assert.ok(!txt.includes('不受默认态度影响'), '这句会让玩家设的默认态度失效')
   assert.ok(!txt.includes('跟「亲见算不算真」的设置无关，永远这么判'), '整段都写成与设置无关会架空 ADR 0103')
   assert.ok(txt.includes('不能因为看见了就给「真」'), '唯一不受设置影响的界线要保留')
+  const { buildContextText } = await import('../plugin/lib/followup.js')
+  const truth = buildContextText({ cognition: { defaultAttitude: '真' } })
+  assert.ok(truth.includes('态度给「真」'), '默认态度要真能改，不是写死未定')
 })
 
 // 守卫：撤回与「写成假」的界线。旧版「亲口否定」和「认定是谎话」语义重叠，
