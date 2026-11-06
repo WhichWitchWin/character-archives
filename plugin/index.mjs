@@ -1706,7 +1706,7 @@ export function apply(ctx) {
   // ── 三段提示词（全局存，ADR 0063）──
   ctx.tavern.handle('character-archives/prompts', async ({ gameId } = {}) => {
     const templates = await readPrompts(ctx)
-    // 动态上下文（只读展示）：本局视角、称呼、栏目定义——每轮拼进工单，玩家改不了（ADR 0095）
+    // 动态上下文（只读展示）：本局视角、称呼、栏目定义、认知口径、按需的约定规则——每轮拼进工单，玩家改不了（ADR 0095/0105）
     let contextText = ''
     if (gameId) {
       try {

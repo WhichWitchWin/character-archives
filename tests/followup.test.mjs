@@ -266,10 +266,24 @@ test('动态上下文：不传认知口径时整段不出现（向后兼容）',
 })
 
 // 约定细则随工单按需发：默认一栏都没勾，整段不该白白烧 token；勾了才教模型怎么写。
+test('动态上下文：栏目表里带【约定】标记时，即使旧调用方没传 definitions 也发约定规则', () => {
+  const text = buildContextText({ entriesText: '· 未了事项【约定】 —— 尚未兑现的承诺' })
+  assert.ok(text.includes('【约定规则】'), '不能出现「有标记却没规则」的分叉')
+})
 test('动态上下文：没有【约定】栏目时不发【约定规则】', () => {
-  const text = buildContextText({ definitions: { b: { name: '性格', convention: false } } })
-  assert.ok(!text.includes('【约定规则】'))
-  assert.ok(!text.includes('`没完成`'), '状态枚举不该出现')
+  const cases = [
+    ['完全不传', undefined],
+    ['空对象', {}],
+    ['不传 definitions', { cognition: cognitionOf() }],
+    ['非约定栏目', { definitions: { b: { name: '性格', convention: false } } }],
+    ['空栏目表', { definitions: {} }],
+    ['null 栏目表', { definitions: null }],
+  ]
+  for (const [label, input] of cases) {
+    const text = input === undefined ? buildContextText() : buildContextText(input)
+    assert.ok(!text.includes('【约定规则】'), `${label} 不该凭空发约定规则`)
+    assert.ok(!text.includes('`没完成`'), `${label} 不该出现状态枚举`)
+  }
 })
 
 test('动态上下文：有【约定】栏目时给出四个状态与沿用规则', () => {

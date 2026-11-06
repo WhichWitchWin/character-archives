@@ -437,11 +437,11 @@ test('约定规则接线：runPhase 与 /prompts 都把本局栏目定义传进�
 
 // 两段交卷工具说明原来各写一份，撤回块与约定块都没登记。
 test('交卷工具说明共用一份并登记撤回块', () => {
-  const count = (source.match(/判人五块 \{回头测试/g) || []).length
-  assert.ok(count <= 1, `工具说明还散着 ${count} 份`)
-  assert.match(source, /SUBMIT_TOOL_DESCRIPTION/u, '要把说明抽成一份常量')
-  assert.match(source, /撤回:\[\{关于,序号\}\]/u, '工具说明里要登记撤回块')
-  assert.match(source, /约定规则/u, '工具说明或动态上下文里要提到约定规则')
+  const count = (source.match(/description:\s*SUBMIT_TOOL_DESCRIPTION/g) || []).length
+  assert.equal(count, 2, `两处 description 都要用常量，实际 ${count} 处`)
+  assert.match(source, /const SUBMIT_TOOL_DESCRIPTION\s*=\s*'[^']*撤回:\[\{关于,序号\}\]/u, '常量定义行要登记撤回块')
+  assert.match(source, /const SUBMIT_TOOL_DESCRIPTION\s*=\s*'[^']*【约定规则】/u, '常量定义行要指路约定规则')
+  assert.match(source, /definitions: state\.entries \?\? \{\}/u, '约定栏目要由本局栏目定义决定，不是写死在工具说明里')
 })
 
 // 栏目抓取提示词会拼进**每轮**工单的【栏目定义】：8 条 × 40 字 = 320 字，

@@ -157,9 +157,10 @@ export function buildWritePrompt({
  *
  * @param {{viewpoint?:string, playerName?:string, entriesText?:string,
  *          definitions?:object, cognition?:object}} input
- *   definitions：本局栏目定义（看有没有【约定】栏目，决定发不发【约定规则】）。
- *   cognition：设置里的「认知」组（P20）。**不传就整段不出**——
- *   老调用方（没读设置）行为跟以前完全一样，不会凭空多出一段。
+ *   definitions：本局栏目定义（看有没有【约定】栏目，决定发不发【约定规则】）；
+ *   不传时按 `entriesText` 里的【约定】标记兜底。**不传 definitions 也不发这段**。
+ *   cognition：设置里的「认知」组（P20）。**不传就【认知口径】整段不出**——
+ *   老调用方（没读设置）行为跟以前完全一样；【约定规则】不依赖 cognition。
  */
 export function buildContextText({ viewpoint = '第二人称', playerName = '主角', entriesText = '', definitions = undefined, cognition = undefined } = {}) {
   const name = String(playerName || '主角').trim() || '主角'
@@ -205,11 +206,14 @@ export function buildContextText({ viewpoint = '第二人称', playerName = '主
   }
   // 约定细则只在**本局真有【约定】栏目**时才发：默认 8 栏一个都没勾，
   // 放固定系统提示词里等于每轮白烧 400 多字（ADR 0105）。
-  const hasConvention = definitions && typeof definitions === 'object'
-    && Object.values(definitions).some((item) => item?.convention === true)
+  // 老调用方可能只传 entriesText、不传 definitions；此时按渲染好的栏目表里的
+  // 【约定】标记兜底，免得「栏目表有标记、工单却没有约定规则」。
+  const hasConvention = (definitions && typeof definitions === 'object'
+    && Object.values(definitions).some((item) => item?.convention === true))
+    || /【约定】/.test(String(entriesText || ''))
   if (hasConvention) {
     lines.push('', '【约定规则】')
-    lines.push('· 只有栏目表里标着【约定】的栏目，每条 `认知` 才写 `约定` 字段，值为 `没完成`／`完成了`／`过期了`／`失败了`；别的栏目别写。')
+    lines.push('· 只有【栏目定义】表里标着【约定】的栏目，每条 `认知` 才写 `约定` 字段，值为 `没完成`／`完成了`／`过期了`／`失败了`；别的栏目别写。')
     lines.push('· 约定时间还没到、或者到了还没兑现 → `没完成`；正文明确兑现 → `完成了`；时间已过没人做到 → `过期了`；明确写出来这事黄了 → `失败了`。')
     lines.push('· 上一轮素材里给你的约定类命题，这一轮重新判断状态；正文没提、并且**约定时间还没过**，才沿用上次的状态。')
     lines.push('· 例：{ "关于":"示例甲", "栏目":"未了事项", "值":"约示例乙明天卯时码头见", "认知":[ { "谁":"示例乙", "来源":"自己", "态度":"真", "约定":"没完成" } ] }')
