@@ -174,16 +174,6 @@ export function buildRecallSection({
   // 调用方拿它盖召回冷却章（2026-11-05 补），没给出去的绝不盖章。
   const blockPointers = []
   let used = 0
-  const linesOf = (name, items, { detailed = true } = {}) => {
-    const lines = [`▍${name}`]
-    for (const item of items) {
-      const detail = detailed ? describeGroups(item.pointer, nameOf, conflictDisplay) : ''
-      const convention = ''
-      void convention
-      lines.push(`· ${item.claim[3]}${detail ? `：${detail}` : ''}`)
-    }
-    return lines
-  }
 
   if (playerBack && nameOf('p0')) {
     const playerItems = []

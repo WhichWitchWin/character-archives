@@ -139,7 +139,8 @@ export function parseWritePayloadBundle(payload) {
     actions.push(action)
   }
 
-  return { actions, place, retracts: parseRetracts(payload) }
+  const parsedRetracts = parseRetracts(payload)
+  return { actions, place, retracts: parsedRetracts.list, retractsDropped: parsedRetracts.dropped }
 }
 
 /**
@@ -154,15 +155,15 @@ export function parseWritePayloadBundle(payload) {
 function parseRetracts(payload) {
   const source = isPlainObject(payload) && Array.isArray(payload.撤回) ? payload.撤回 : []
   const out = []
+  let dropped = 0
   for (const item of source) {
-    if (!isPlainObject(item)) continue
+    if (!isPlainObject(item)) { dropped += 1; continue }
     const name = textOf(item.谁)
     const no = Number(item.序号)
-    if (!name) continue
-    if (!Number.isInteger(no) || no <= 0) continue
+    if (!name || !Number.isInteger(no) || no <= 0) { dropped += 1; continue }
     out.push({ 谁: name, 序号: no })
   }
-  return out
+  return { list: out, dropped }
 }
 
 /** 只要动作的旧入口（其余调用方不用改）。 */

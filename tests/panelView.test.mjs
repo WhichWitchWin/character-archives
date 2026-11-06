@@ -410,3 +410,47 @@ test('面板数据：每条命题带 autoWords（现算、不落盘）', async (
   assert.equal((src.match(/autoWords: autoWordsOf/g) || []).length, 2, '认知视角与「关于他」两处都要带')
   assert.ok(!src.includes('withClaimWords'), '不许把自动词写回命题（只展示）')
 })
+
+// 上面那条只是源码守卫——参数传反（string/对象形状搞错）它拦不住。
+// 这里真跑 buildPanelView：注入假分词器，断言两处 autoWords 的实际数组。
+test('面板数据：autoWords 真的算出来了，且排除已有索引词（行为测试）', async () => {
+  const { configureWordSegmenter } = await import('../plugin/lib/indexWords.js')
+  configureWordSegmenter({
+    tokenize: (text) => {
+      const table = { 在超市当收银员: ['在', '超市', '当', '收银员'], 守在药铺后门: ['守', '在', '药铺', '后门'] }
+      return table[String(text)] ?? []
+    },
+  })
+  const snapshot = {
+    p: [['p1', 1, '老陈', ''], ['p2', 1, '小s', '']],
+    c: [
+      [1, 'p1', 'a', '在超市当收银员', 1, [{ 词: '超市', 类: '地' }]],
+      [2, 'p1', 'a', '守在药铺后门', 1, []],
+    ],
+    pt: [
+      ['p2', 1, [[0, '', '第一天']], 1],
+      ['p2', 2, [[0, '', '第一天']], 1],
+    ],
+  }
+  const view = buildPanelView({
+    snapshot,
+    definitions: { a: { name: '职业' } },
+    checkedCodes: new Set(['a']),
+    turn: 1,
+  })
+  const row = [...view.groups.present, ...view.groups.offline, ...view.groups.fuzzyOffline, ...view.groups.cold]
+    .find((item) => item.id === 'p2')
+  assert.ok(row, '找不到主角那一行')
+
+  const first = row.cognitions.find((cog) => cog.claimId === 1)
+  assert.deepEqual(first.autoWords, ['收银员'], '索引词「超市」要被排除，只剩「收银员」')
+  const second = row.cognitions.find((cog) => cog.claimId === 2)
+  assert.deepEqual(second.autoWords, ['药铺', '后门'], '没有索引词时全留（单字被切掉）')
+
+  // 「关于他」那一侧也要带
+  const owner = [...view.groups.present, ...view.groups.offline].find((item) => item.id === 'p1')
+  const column = owner.aboutColumns.find((col) => col.code === 'a')
+  assert.deepEqual(column.claims.find((c) => c.claimId === 1).autoWords, ['收银员'])
+
+  configureWordSegmenter(null)
+})

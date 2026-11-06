@@ -208,7 +208,41 @@ test('index.mjs：撤回日志带上「关于谁」与命题内容', async () =>
   const src = readFileSync(fileURLToPath(new URL('../plugin/index.mjs', import.meta.url)), 'utf8')
   const at = src.indexOf('撤回 ${retraction.applied.length} 条认知')
   assert.ok(at >= 0, '找不到撤回日志')
-  const block = src.slice(at, at + 700)
-  assert.ok(block.includes('关于'), '日志缺「关于谁」')
+  const block = src.slice(at, at + 900)
+  // 收窄：「关于」这个词在写入段到处都是，要钉的是日志里那个字段名 `关于: nameOfId(`
+  assert.match(block, /关于:\s*nameOfId\(/u, '日志缺「关于谁」（要写成 关于: nameOfId(aboutId)）')
   assert.ok(block.includes('decodeValue'), '命题内容要按字典解码，不能直接印下标')
+})
+
+// 撤回块被整块丢弃时必须有诊断（2026-11-06 评审 C1）。
+// 风险场景：升级时面板存档里还是旧提示词 → 模型仍发 {关于,序号} → 解析层只认「谁」
+// → 整个撤回块被过滤成空数组 → 下面 `if (retracts.length)` 直接跳过，
+// 玩家和调试都看不出「这次的撤回全丢了」。
+test('撤回：解析层整块丢弃时，index.mjs 要记一条 warn（旧字段「关于」的升级路径）', async () => {
+  const { readFileSync } = await import('node:fs')
+  const { fileURLToPath } = await import('node:url')
+  const src = readFileSync(fileURLToPath(new URL('../plugin/index.mjs', import.meta.url)), 'utf8')
+  // 必须在撤回段里检查「原始块非空但解析结果为空」
+  assert.ok(src.includes('writePayload') && src.includes('撤回'), '找不到撤回段')
+  const at = src.indexOf('const retracts = Array.isArray')
+  assert.ok(at > 0, '找不到 retracts 解析行')
+  const before = src.slice(Math.max(0, at - 900), at)
+  assert.ok(
+    before.includes('撤回') && (before.includes('length') || before.includes('Array.isArray')),
+    '要在 retracts 之前检测原始撤回块',
+  )
+  const after = src.slice(at, at + 900)
+  assert.ok(
+    after.includes('没被识别') || after.includes('全部丢掉') || after.includes('旧字段'),
+    '解析结果为空时要给一条人话诊断',
+  )
+})
+
+test('撤回：解析层丢弃的条目数要能报出来（parseRetracts 给 dropped 计数）', async () => {
+  const { parseWritePayloadBundle } = await import('../plugin/lib/payload.js')
+  const bundle = parseWritePayloadBundle({ 撤回: [{ 关于: '沈清禾', 序号: 1 }, { 关于: '小s', 序号: 2 }] })
+  assert.deepEqual(bundle.retracts, [], '旧字段不该再被认')
+  assert.equal(bundle.retractsDropped, 2, '要报出被丢弃的条数，供上层记日志')
+  const ok = parseWritePayloadBundle({ 撤回: [{ 谁: '沈清禾', 序号: 1 }] })
+  assert.equal(ok.retractsDropped, 0, '正常条目不算丢弃')
 })

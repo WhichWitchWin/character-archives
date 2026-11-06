@@ -50,3 +50,26 @@ export function pruneExpired(cooldowns, turn) {
   }
   return next
 }
+
+/**
+ * 清掉某条命题的所有冷却记录（删命题时调用）。
+ *
+ * 为什么需要：命题 id 是「现有最大 +1」（`claims.js` 的 `nextClaimId`），所以删掉最高号命题后，
+ * 下一个新命题会**拿到同一个号**。冷却键 `pt:人物:命题id` 只按到期时间清，不认命题换过没有——
+ * 新命题恰好复用旧号、又被同一个人知道，那条新指针就会被上一世的冷却无故压住最多 N 轮。
+ * 表现为「数据看着都对，召回却少了一条」，很难查。
+ *
+ * @param {object} cooldowns 冷却表
+ * @param {number} claimId 要清掉的命题 id
+ */
+export function dropClaimCooldowns(cooldowns, claimId) {
+  const id = Number(claimId)
+  const next = {}
+  if (!Number.isInteger(id)) return { ...(cooldowns ?? {}) }
+  const suffix = `:${id}`
+  for (const [key, record] of Object.entries(cooldowns ?? {})) {
+    if (key.endsWith(suffix)) continue
+    next[key] = record
+  }
+  return next
+}

@@ -53,7 +53,7 @@ import { PLAYER_ID, ensurePlayer, isPlayer, isPronounName } from './lib/player.j
 import { fuzzyLeaveIds, markSeen } from './lib/fuzzy.js'
 import { buildRecallSection } from './lib/recallEngine.js'
 import { buildPendingRecallText, normalizeLevel, queryPerson } from './lib/recallQuery.js'
-import { pointerKey, pruneExpired } from './lib/cooldown.js'
+import { dropClaimCooldowns, pointerKey, pruneExpired } from './lib/cooldown.js'
 import { DEFAULT_TEMPLATES, PLACEHOLDERS, fillTemplate, resolveTemplates } from './lib/promptTemplates.js'
 import { buildPresetDefinitions } from './lib/presets.js'
 import { buildPanelView, DORMANT_TURNS } from './lib/panelView.js'
@@ -751,7 +751,8 @@ function submitToolSpec() {
  * @returns {Promise<{payload:any, merged:boolean}>} 拿不到（没有 agents 服务 / 出错）就返回空
  */
 async function runPhase(ctx, gameId, promptText, { viewpoint = '第二人称', playerName = '', systemTemplate = '', entriesText = '', definitions = {}, mode = 'subagent', cognition = undefined } = {}) {
-  // 动态上下文（视角／称呼／代词／栏目定义／认知口径／约定规则）每轮随工单发：成员的系统提示词是**固定**的（ADR 0095）
+  // 动态上下文（视角／称呼／代词／栏目定义／认知口径）每轮随工单发：成员的系统提示词是**固定**的（ADR 0095）
+  // 约定细则已于 2026-11-06 搬回系统提示词（ADR 0106），不再随工单发
   const contextText = buildContextText({ viewpoint, playerName, entriesText, definitions, cognition })
   const taskText = `${contextText}\n\n${promptText}`
 
@@ -1176,6 +1177,15 @@ async function runWriteback(ctx, state, { gameId, turn, text, textVersion, setti
   // ── ③ 撤回（ADR 0102）：模型说「这个人不再这么认为了」──
   // 排在写入之后：写入可能用 `序号` 复用旧命题，撤回先把旧命题删了会让那些序号失效。
   const retracts = Array.isArray(writeBundle?.retracts) ? writeBundle.retracts : []
+  // 解析层会把形状不对的条目直接丢掉（ADR 0106 只认 `谁`+`序号`）。丢掉本身是对的，
+  // 但**不能一声不响**：升级时面板存档若还是旧提示词，模型会一直发 `{关于,序号}`，
+  // 于是每次撤回都被整块丢掉，玩家和调试都看不出"这次的撤回全没生效"。
+  if (writeBundle?.retractsDropped > 0) {
+    pushDebug(state, 'warn', `撤回有 ${writeBundle.retractsDropped} 条没被识别、已全部丢掉`, {
+      可能原因: '模型还在用旧字段「关于」（现在只认「谁」+「序号」）；检查面板「提示词」页是否还是旧版',
+      解析后剩几条: retracts.length,
+    })
+  }
   if (retracts.length) {
     const retraction = applyRetractions({
       snapshot,
@@ -1186,6 +1196,10 @@ async function runWriteback(ctx, state, { gameId, turn, text, textVersion, setti
     })
     if (retraction.applied.length) {
       const nameOfId = (id) => String(snapshot.p.find((person) => person?.[0] === id)?.[2] ?? id ?? '?')
+      // 命题 id 会被复用：连带清掉这次被清掉的命题的冷却（见 cooldown.js 的 dropClaimCooldowns）
+      for (const item of retraction.applied) {
+        if (item.droppedClaim) state.cooldowns = dropClaimCooldowns(state.cooldowns, item.claimId)
+      }
       pushDebug(state, 'info', `撤回 ${retraction.applied.length} 条认知`, {
         // 谁 → 关于谁 · 命题内容：命题说的是谁由程序按序号查（ADR 0106），
         // 模型只报「谁＋序号」。这样调试里能一眼看出撤掉的是谁的哪条认知。
@@ -1248,6 +1262,11 @@ async function runWriteback(ctx, state, { gameId, turn, text, textVersion, setti
   const orphans = pruneOrphanClaims(snapshot.c ?? [], snapshot.pt ?? [], { turn })
   if (orphans.removed.length) {
     snapshot.c = (snapshot.c ?? []).filter((claim) => !orphans.removed.includes(claim?.[0]))
+    // 顺手清掉这些命题的冷却记录：命题 id 会被复用（nextClaimId = 最大+1），
+    // 留着旧号的冷却会压住将来恰好拿到同号的新命题（见 cooldown.js 的 dropClaimCooldowns）
+    for (const claimId of orphans.removed) {
+      state.cooldowns = dropClaimCooldowns(state.cooldowns, claimId)
+    }
     pushDebug(state, 'info', `孤儿命题清掉 ${orphans.removed.length} 条`, { id: orphans.removed.slice(0, 10) })
   }
 
@@ -1737,7 +1756,7 @@ export function apply(ctx) {
   // ── 三段提示词（全局存，ADR 0063）──
   ctx.tavern.handle('character-archives/prompts', async ({ gameId } = {}) => {
     const templates = await readPrompts(ctx)
-    // 动态上下文（只读展示）：本局视角、称呼、栏目定义、认知口径、按需的约定规则——每轮拼进工单，玩家改不了（ADR 0095/0105）
+    // 动态上下文（只读展示）：本局视角、称呼、栏目定义、认知口径——每轮拼进工单，玩家改不了（ADR 0095/0106）
     let contextText = ''
     if (gameId) {
       try {
@@ -2903,6 +2922,13 @@ export function apply(ctx) {
     let removedPointers = 0
     for (const pointer of pointing) {
       if (dropPointer(snapshot.pt, pointer[0], id)) removedPointers += 1
+    }
+    // 命题 id 会被复用，留着这个号的冷却会压住将来同号的新命题（见 cooldown.js）
+    const state = await loadGameState(ctx.tavern, gameId)
+    const cleanedCooldowns = dropClaimCooldowns(state.cooldowns, id)
+    if (Object.keys(cleanedCooldowns).length !== Object.keys(state.cooldowns ?? {}).length) {
+      state.cooldowns = cleanedCooldowns
+      await saveGameState(ctx, gameId, state)
     }
 
     await saveSnapshot(ctx, { gameId, turn, snapshot, textVersion: await currentTextVersion(ctx, gameId, turn) })

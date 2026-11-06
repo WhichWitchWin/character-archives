@@ -441,7 +441,12 @@ test('交卷工具说明共用一份并登记撤回块', () => {
   assert.equal(count, 2, `两处 description 都要用常量，实际 ${count} 处`)
   assert.match(source, /const SUBMIT_TOOL_DESCRIPTION\s*=\s*'[^']*撤回:\[\{谁,序号\}\]/u, '常量定义行要登记撤回块（谁＋序号）')
   assert.match(source, /const SUBMIT_TOOL_DESCRIPTION\s*=\s*'[^']*约定状态/u, '常量定义行要指路约定状态（细则在系统提示词里）')
-  assert.match(source, /definitions: state\.entries \?\? \{\}/u, '约定栏目要由本局栏目定义决定，不是写死在工具说明里')
+  assert.match(source, /definitions: state\.entries \?\? \{\},?\s*\n?\s*(?:mode|definitions)/u, '派发时要传本局栏目定义')
+  // 上面那条太宽（这个字面量在 index.mjs 出现 5 次）。真正要钉的是：runPhase 调用点成对传了
+  // entriesText 与 definitions —— 只传前者会「栏目表带【约定】标记、却没有对应规则」。
+  const phaseCall = lines.find((line) => line.includes('mode: settings.writeback'))
+  assert.ok(phaseCall, '找不到 runPhase 调用行')
+  assert.ok(phaseCall.includes('entriesText') && phaseCall.includes('definitions'), 'runPhase 调用要同时传 entriesText 与 definitions')
 })
 
 // 栏目抓取提示词会拼进**每轮**工单的【栏目定义】：8 条 × 40 字 = 320 字，

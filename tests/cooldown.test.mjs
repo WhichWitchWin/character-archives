@@ -7,6 +7,7 @@ import assert from 'node:assert/strict'
 
 import {
   DEFAULT_COOLDOWN_TURNS,
+  dropClaimCooldowns,
   isPointerCoolingDown,
   pointerKey,
   pruneExpired,
@@ -68,4 +69,17 @@ test('清理是纯函数，不改原表；空表也不炸', () => {
   pruneExpired(cooldowns, 20)
   assert.equal(cooldowns['pt:p1:1'].until, 15, '原表不该被改')
   assert.deepEqual(pruneExpired(undefined, 5), {})
+})
+
+// 命题 id 会被复用（nextClaimId = 现有最大 +1），而冷却表键是 `pt:人物:命题id`、只按到期清。
+// 于是：老命题被撤/被孤儿清理 → 冷却记录还在 → 新命题恰好拿到同一个号、同一人又知道它
+// → 这条新指针被「无故冷却」最多 N 轮（默认 10），表现为「数据看着对、召回偷偷少一条」。
+test('冷却：清掉某条命题的冷却记录（防命题 id 复用时误伤新命题）', () => {
+  const cooldowns = {
+    'pt:p1:7': { lastTurn: 3, until: 13 },
+    'pt:p2:7': { lastTurn: 3, until: 13 },
+    'pt:p1:8': { lastTurn: 3, until: 13 },
+  }
+  const next = dropClaimCooldowns(cooldowns, 7)
+  assert.deepEqual(Object.keys(next).sort(), ['pt:p1:8'], '只留别的命题的冷却')
 })
