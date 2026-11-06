@@ -237,27 +237,25 @@ test('改值走同一把尺子：超范围被夹紧，空串不改', () => {
   assert.equal(untouched.recall.budgetChars, settings.recall.budgetChars, '空串不该把值改成 0')
 })
 
-// 两个跨插件开关先隐藏（2026-11-06 用户要求）。
-// 事实：crossPluginRead / crossPluginWrite 只出现在设置定义与渲染里，**没有任何业务逻辑读过**，
-// 点了也不生效。所以隐藏它们没有任何功能损失；定义留着，以后要恢复把 hidden 去掉即可。
-test('可见性：两个跨插件开关不出现在面板上，其余照常', () => {
+// 可见性三项全部隐藏（2026-11-06 用户要求，分两批做的）。
+// 事实：crossPluginRead / crossPluginWrite / toolFollows 只出现在设置定义与渲染里，
+// **没有任何业务逻辑读过**（`archive_query` 并不检查"闭眼"），点了也不生效。
+// 三项全隐藏后整组被空组过滤掉，玩家不再看到一个点不动的开关。
+// 定义全部留着：将来真正实现"闭眼不给查"时，去掉 hidden 即可。
+test('可见性：三项全隐藏，整组不再出现在面板上', () => {
   const sections = describeSettings(DEFAULT_SETTINGS, DEFAULT_SETTINGS)
   const paths = sections.flatMap((s) => s.groups.flatMap((g) => g.items.map((i) => i.path)))
-  assert.ok(!paths.includes('visibility.crossPluginRead'), '跨插件读不该再出现')
-  assert.ok(!paths.includes('visibility.crossPluginWrite'), '跨插件写不该再出现')
-  assert.ok(paths.includes('visibility.toolFollows'), '查询工具那个开关要留着')
+  for (const one of ['visibility.crossPluginRead', 'visibility.crossPluginWrite', 'visibility.toolFollows']) {
+    assert.ok(!paths.includes(one), `${one} 不该再出现在面板上`)
+  }
+  const titles = sections.flatMap((s) => s.groups.map((g) => g.title))
+  assert.ok(!titles.includes('可见性'), '三项全隐藏后整组不该再出现（空组过滤）')
 })
 
-test('可见性：隐藏后组里只剩查询工具一项，且标题还在', () => {
-  const sections = describeSettings(DEFAULT_SETTINGS, DEFAULT_SETTINGS)
-  const group = sections.flatMap((s) => s.groups).find((g) => g.title === '可见性')
-  assert.ok(group, '可见性这一组要留着')
-  assert.deepEqual(group.items.map((i) => i.path), ['visibility.toolFollows'])
-})
-
-test('可见性：隐藏只影响展示，findSetting 仍能按路径找到它们', () => {
-  assert.ok(findSetting('visibility.crossPluginRead'), '定义要保留，方便以后恢复')
-  assert.ok(findSetting('visibility.crossPluginWrite'))
+test('可见性：隐藏只影响展示，三项定义都还在', () => {
+  for (const one of ['visibility.crossPluginRead', 'visibility.crossPluginWrite', 'visibility.toolFollows']) {
+    assert.ok(findSetting(one), `${one} 的定义要保留，方便以后恢复`)
+  }
 })
 
 // 分组名从「首次离场」改成「离场」（2026-11-06 用户要求）。
@@ -283,4 +281,14 @@ test('离场组：隐藏只影响展示，定义仍在（findSetting 找得到�
   assert.ok(findSetting('firstExit.mode'), 'mode 定义要保留')
   assert.ok(findSetting('firstExit.nominationTurns'), 'nominationTurns 定义要保留')
   assert.ok(findSetting('firstExit.fuzzyTurns'))
+})
+
+// 最后一个假开关也隐藏（2026-11-06 用户指示）。
+// 查证：visibility.toolFollows 只出现在设置定义与渲染里，没有任何业务代码读取——
+// 跟 crossPluginRead / crossPluginWrite 同一种情况：面板能点，点了不影响任何行为。
+test('可见性：查询工具那个开关也隐藏，整组收起', () => {
+  const sections = describeSettings(DEFAULT_SETTINGS, DEFAULT_SETTINGS)
+  const titles = sections.flatMap((s) => s.groups.map((g) => g.title))
+  assert.ok(!titles.includes('可见性'), '三项全隐藏后整组不该再出现（空组过滤）')
+  assert.ok(findSetting('visibility.toolFollows'), '定义要保留，将来实现"闭眼不给查"时去掉 hidden 即可')
 })

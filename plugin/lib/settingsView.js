@@ -265,6 +265,10 @@ export const SETTING_SCHEMA = Object.freeze([
         path: 'visibility.toolFollows',
         label: '查询工具跟随可见性',
         type: 'switch',
+        // 先隐藏（2026-11-06）：这一项也没有任何业务代码读取——`archive_query` 并不检查"闭眼"。
+        // 三项全隐藏后整组会被空组过滤掉，玩家不再看到一个点不动的开关。
+        // 将来要真做"闭眼的人模型也查不到"，把 hidden 去掉并在工具里加判断即可。
+        hidden: true,
         hint: '闭上眼的人，模型也查不到。',
       },
       {
