@@ -292,3 +292,31 @@ test('提示词：索引词上限是 0～3', () => {
   assert.ok(txt.includes('0～3 个'), '上限要改成 3')
   assert.ok(!txt.includes('0～2 个'), '旧上限要清掉')
 })
+
+// 恢复默认必须回到「当前这一版」（2026-11-06 用户要求）。
+// 为什么要守：savePrompts 在空串时会把 assets/*.txt 重写成 prompt.js 的常量 +
+// DEFAULT_TEMPLATES，所以这三处只要有一处没跟上，玩家一点「恢复默认」就把文件写回旧内容。
+test('恢复默认：三段都回到 assets 里的当前版本', async () => {
+  const { PROMPT_TEMPLATE, WRITE_TEMPLATE, RECALL_TEMPLATE } = await import('../plugin/prompt.js')
+  const assets = {
+    system: systemText().trim(),
+    write: readFileSync(fileURLToPath(new URL('../plugin/assets/write-prompt.txt', import.meta.url)), 'utf8').trim(),
+    recall: readFileSync(fileURLToPath(new URL('../plugin/assets/recall-prompt.txt', import.meta.url)), 'utf8').trim(),
+  }
+  assert.equal(PROMPT_TEMPLATE.trim(), assets.system, 'prompt.js 的系统段要跟 assets 一致')
+  assert.equal(WRITE_TEMPLATE.trim(), assets.write, 'prompt.js 的写入段要跟 assets 一致')
+  assert.equal(RECALL_TEMPLATE.trim(), assets.recall, 'prompt.js 的召回段要跟 assets 一致')
+  assert.equal(DEFAULT_TEMPLATES.write, assets.write, 'DEFAULT_TEMPLATES.write 要跟 assets 一致（恢复默认会写它）')
+  assert.equal(DEFAULT_TEMPLATES.recall, assets.recall, 'DEFAULT_TEMPLATES.recall 要跟 assets 一致（恢复默认会写它）')
+  const restored = resolveTemplates({ system: '', write: '', recall: '' }, {
+    system: PROMPT_TEMPLATE.trim(), write: DEFAULT_TEMPLATES.write, recall: DEFAULT_TEMPLATES.recall,
+  })
+  assert.equal(restored.system, assets.system)
+  assert.equal(restored.write, assets.write)
+  assert.equal(restored.recall, assets.recall)
+})
+
+test('默认召回模板带「认知不是客观真相」那段说明（手改版已定为默认）', () => {
+  assert.ok(DEFAULT_TEMPLATES.recall.includes('不是剧情本身'))
+  assert.ok(DEFAULT_TEMPLATES.recall.includes('不是客观真相'))
+})

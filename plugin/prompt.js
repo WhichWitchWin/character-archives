@@ -25,4 +25,4 @@ export function buildSystemPrompt({ person = '第二人称', playerName = '' } =
 }
 
 export const WRITE_TEMPLATE = "【写入】\n\n【当前游戏内时间】{{GT}}\n\n{{PEOPLE}}"
-export const RECALL_TEMPLATE = "【人物档案参考】\n本局写作人称：{{VIEWPOINT}}\n当前：{{STAMP}}\n\n{{BLOCKS}}"
+export const RECALL_TEMPLATE = "【人物档案参考】\n这是一份「人物档案参考」——是这局**已建档人物自己知道的事**，用来让你写正文时保持人物前后一致，**不是剧情本身**。抬头里的「本局写作人称」告诉你正文是第几人称；每条后面那截（「—— 他自己确认过／他听某人说的，拿不准」）说的是**这个人对这件事的认知**，不是客观真相。\n本局写作人称：{{VIEWPOINT}}\n当前：{{STAMP}}\n\n{{BLOCKS}}"
