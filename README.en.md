@@ -43,13 +43,26 @@ And it accepts one awkward truth—**for the same event, A believes it, B denies
 ### Prerequisites
 
 - **DSH Tavern**, already installed
-- You know how to copy a folder in your file manager
+- You can create and extract zip files
 
-### Copy the folder into place
+### Option 1: Upload a ZIP (recommended)
+
+1. Get the package—download this repo via **Code → Download ZIP**, or use a package someone gave you
+2. Extract it, then **compress only the `plugin/` folder** into a zip
+3. In the tavern: **Settings → Tavern Plugins → Upload ZIP**, and pick that zip
+4. The host loads it within a few seconds; **refresh the browser** and it appears in the sidebar
+
+> ⚠️ **Do not zip the whole repository**
+> The installer treats the **shallowest `package.json`** as the plugin root. This repo has a `package.json` at the top level (for dev scripts), so a whole-repo zip makes it win over `plugin/package.json`, and the install fails with:
+> `package.json 没有写宿主入口（exports "." 或 main），不是 Tavern 插件`
+>
+> Zip only the `plugin/` level—the resulting archive should contain `plugin/package.json` (or `package.json` directly), not the repo-root `package.json`.
+
+### Option 2: Copy the folder manually
 
 A DSH Tavern plugin **is just a folder**—no build step, no dependencies, no patching the tavern itself.
 
-Copy `plugin/` from this repository into the tavern's data directory under `plugins/`, renamed to `character-archives`:
+Copy `plugin/` into the tavern's data directory under `plugins/`, renamed to `character-archives`:
 
 ```text
 <tavern data dir>/plugins/
@@ -67,6 +80,8 @@ On Windows the tavern data directory is typically:
 C:\Users\<your-name>\.dsh\profile-data\tavern\data\plugins\
 ```
 
+> The folder name must be `character-archives`—the plugin uses it to recognise that it was installed by the tavern, which is how it puts its data in `<tavern data dir>/plugin-data/character-archives/`. With the wrong name it falls back to storing data inside the plugin folder, where an update can wipe it.
+
 ### If you're developing in this repo
 
 ```bash
@@ -82,6 +97,8 @@ This copies `plugin/` into the directory above.
 ### Verify
 
 Open any game → sidebar "＋" → Plugins → **Character Archives**. If the panel appears, you're set.
+
+> 💡 **Updating an existing install requires a restart**: a fresh install is loaded automatically, but after an in-place upgrade the old module is still in memory—restart DSH to pick up the new code.
 
 ---
 
@@ -163,6 +180,9 @@ Delete that claim in the panel. You can also tighten the recording thresholds in
 
 **Q: The model records every trivial detail.**
 This is where a lot of design effort went. The system prompt has "four hard rules", two of which exist specifically for this: the action itself isn't recorded, and what the role would naturally do isn't recorded. If it's still too verbose, make those two rules stricter in the Prompts tab.
+
+**Q: Pasting the GitHub URL fails with "no host entry"?**
+That's this repository's layout, not your mistake. The installer picks the **shallowest `package.json`** as the plugin root, and the repo root has one for dev scripts, so it wins over `plugin/package.json`. **Use "Upload ZIP" instead**, and zip only the `plugin/` level (see [Installation](#installation)).
 
 **Q: Can I install two copies?**
 No. Plugins are identified by name.
