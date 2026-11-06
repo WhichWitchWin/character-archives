@@ -439,8 +439,8 @@ test('约定规则接线：runPhase 与 /prompts 都把本局栏目定义传进�
 test('交卷工具说明共用一份并登记撤回块', () => {
   const count = (source.match(/description:\s*SUBMIT_TOOL_DESCRIPTION/g) || []).length
   assert.equal(count, 2, `两处 description 都要用常量，实际 ${count} 处`)
-  assert.match(source, /const SUBMIT_TOOL_DESCRIPTION\s*=\s*'[^']*撤回:\[\{关于,序号\}\]/u, '常量定义行要登记撤回块')
-  assert.match(source, /const SUBMIT_TOOL_DESCRIPTION\s*=\s*'[^']*【约定规则】/u, '常量定义行要指路约定规则')
+  assert.match(source, /const SUBMIT_TOOL_DESCRIPTION\s*=\s*'[^']*撤回:\[\{谁,序号\}\]/u, '常量定义行要登记撤回块（谁＋序号）')
+  assert.match(source, /const SUBMIT_TOOL_DESCRIPTION\s*=\s*'[^']*约定状态/u, '常量定义行要指路约定状态（细则在系统提示词里）')
   assert.match(source, /definitions: state\.entries \?\? \{\}/u, '约定栏目要由本局栏目定义决定，不是写死在工具说明里')
 })
 

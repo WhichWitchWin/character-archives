@@ -611,7 +611,7 @@ function freshBox() {
 }
 
 /** 交卷工具说明共用一份：子代理档与后台成员档注册的是同一个契约（ADR 0092/0102）。 */
-const SUBMIT_TOOL_DESCRIPTION = '提交本轮的动作。一次交一个对象：判人五块 {回头测试,建档,改状态,改名,模糊建档} + 命题数组 {命题:[{关于,栏目,值,认知}]} + 可选撤回块 撤回:[{关于,序号}]；本局有约定栏目时认知还要带约定字段，规则见工单开头【约定规则】。没有要做的就交 {}。'
+const SUBMIT_TOOL_DESCRIPTION = '提交本轮的动作。一次交一个对象：判人五块 {回头测试,建档,改状态,改名,模糊建档} + 命题数组 {命题:[{关于,栏目,值,认知}]} + 可选撤回块 撤回:[{谁,序号}]；本局有约定栏目时认知还要带约定字段，规则见系统提示词的「约定状态」段。没有要做的就交 {}。'
 
 /**
  * 拿到这一局的常驻子代理（没有就建）。
@@ -1174,10 +1174,14 @@ async function runWriteback(ctx, state, { gameId, turn, text, textVersion, setti
       allowedIds: presentIds,
     })
     if (retraction.applied.length) {
+      const nameOfId = (id) => String(snapshot.p.find((person) => person?.[0] === id)?.[2] ?? id ?? '?')
       pushDebug(state, 'info', `撤回 ${retraction.applied.length} 条认知`, {
+        // 谁 → 关于谁 · 命题内容：命题说的是谁由程序按序号查（ADR 0106），
+        // 模型只报「谁＋序号」。这样调试里能一眼看出撤掉的是谁的哪条认知。
         明细: retraction.applied.slice(0, 8).map((item) => ({
-          人物: String(snapshot.p.find((person) => person?.[0] === item.personId)?.[2] ?? item.personId),
-          命题: item.claimId,
+          谁: nameOfId(item.personId),
+          关于: nameOfId(item.aboutId),
+          命题: decodeValue(item.claimText, state.dict),
           连带清掉命题: item.droppedClaim,
         })),
       })

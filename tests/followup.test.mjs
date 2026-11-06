@@ -265,43 +265,17 @@ test('动态上下文：不传认知口径时整段不出现（向后兼容）',
   }
 })
 
-// 约定细则随工单按需发：默认一栏都没勾，整段不该白白烧 token；勾了才教模型怎么写。
-test('动态上下文：栏目表里带【约定】标记时，即使旧调用方没传 definitions 也发约定规则', () => {
-  const text = buildContextText({ entriesText: '· 未了事项【约定】 —— 尚未兑现的承诺' })
-  assert.ok(text.includes('【约定规则】'), '不能出现「有标记却没规则」的分叉')
-})
-test('动态上下文：没有【约定】栏目时不发【约定规则】', () => {
+test('动态上下文：约定规则不再随工单发（已回到系统提示词，ADR 0106）', () => {
   const cases = [
     ['完全不传', undefined],
     ['空对象', {}],
     ['不传 definitions', { cognition: cognitionOf() }],
-    ['非约定栏目', { definitions: { b: { name: '性格', convention: false } } }],
-    ['空栏目表', { definitions: {} }],
-    ['null 栏目表', { definitions: null }],
+    ['有约定栏目', { definitions: { a: { name: '未了事项', convention: true } } }],
+    ['栏目表带标记', { entriesText: '· 未了事项【约定】 —— 尚未兑现的承诺' }],
   ]
   for (const [label, input] of cases) {
     const text = input === undefined ? buildContextText() : buildContextText(input)
-    assert.ok(!text.includes('【约定规则】'), `${label} 不该凭空发约定规则`)
+    assert.ok(!text.includes('【约定规则】'), `${label} 不该再随工单发约定规则`)
     assert.ok(!text.includes('`没完成`'), `${label} 不该出现状态枚举`)
   }
-})
-
-test('动态上下文：有【约定】栏目时给出四个状态与沿用规则', () => {
-  const withConvention = buildContextText({ definitions: { a: { name: '未了事项', convention: true } } })
-  assert.ok(withConvention.includes('【约定规则】'))
-  for (const state of ['没完成', '完成了', '过期了', '失败了']) {
-    assert.ok(withConvention.includes(state), `${state} 没写进约定规则`)
-  }
-  assert.ok(withConvention.includes('约定时间还没过'), '沿用条件要写清，避免与「过期了」打架')
-  assert.ok(withConvention.includes('"约定":"没完成"'), '要给一条带约定字段的示例')
-})
-
-test('动态上下文：【约定规则】排在【认知口径】之后（不传认知时也照常发）', () => {
-  const text = buildContextText({
-    definitions: { a: { name: '未了事项', convention: true } },
-    cognition: cognitionOf(),
-  })
-  assert.ok(text.indexOf('【认知口径】') < text.indexOf('【约定规则】'))
-  const plain = buildContextText({ definitions: { a: { name: '未了事项', convention: true } } })
-  assert.ok(plain.includes('【约定规则】'), '约定规则不依赖认知设置')
 })
