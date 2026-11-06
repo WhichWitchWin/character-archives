@@ -109,7 +109,7 @@ export function buildPanelView({
         words: wordsOfClaim(claim),
         // 程序自动分出来的词（仅展示，不落盘）：玩家看不到它就会以为"这人没索引词，
         // 凭什么被召回"。现算的好处是泛词表一改、所有老档案立刻按新规则算（ADR 0107）。
-        autoWords: autoWordsOf(claim?.[3]),
+        autoWords: autoWordsOf(claim?.[3], wordsOfClaim(claim)),
         aboutName: nameOfId(aboutId),
         lastTurn: Number.isInteger(pointer[3]) ? pointer[3] : 0,
         groups: (Array.isArray(pointer[2]) ? pointer[2] : []).map((group, index) => ({
@@ -149,7 +149,7 @@ export function buildPanelView({
         name: String(definitions?.[code]?.name ?? code),
         claims: claims
           .filter((claim) => String(claim[1] ?? '') === String(id) && String(claim[2] ?? '') === code)
-          .map((claim) => ({ claimId: claim[0], text: String(claim[3] ?? ''), words: wordsOfClaim(claim), autoWords: autoWordsOf(claim[3]) })),
+          .map((claim) => ({ claimId: claim[0], text: String(claim[3] ?? ''), words: wordsOfClaim(claim), autoWords: autoWordsOf(claim[3], wordsOfClaim(claim)) })),
       })),
       // 「按认知浏览」：他的指针按**命题的栏目**分组——「老陈认为周砚的职业是画师」会落在「职业」下面。
       // 只列有内容的栏目（认知视角不补空），跟 aboutColumns 的数据源不同，别混。

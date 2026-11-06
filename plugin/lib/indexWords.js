@@ -63,10 +63,20 @@ const STOP_WORDS = new Set([
  *
  * 规则：只留 **2 字以上**的纯中文/数字词——虚词（在、的、了、他、但、当）在分词里
  * 基本都是单字，一刀切掉，连停用词表都不用建；再挡掉泛词表里的高频词。
+ *
+ * @param {string} text 命题的值
+ * @param {Array<{词?:string}|string>} [exclude] 已有的索引词：**同一个词不重复算**
+ *   （打分是「索引词命中 || 自动词命中」，本来就只加一次分；去重是为了面板不重复显示，
+ *    也防止以后有人把这里改成累加。见 ADR 0107 补充）
  */
-export function autoWordsOf(text) {
+export function autoWordsOf(text, exclude = undefined) {
   const raw = String(text ?? '')
   if (!wordSegmenter || !raw) return []
+  const skip = new Set()
+  for (const item of Array.isArray(exclude) ? exclude : []) {
+    const word = String(typeof item === 'string' ? item : item?.词 ?? '').trim()
+    if (word) skip.add(word)
+  }
   const out = []
   const seen = new Set()
   for (const token of wordSegmenter.tokenize(raw) ?? []) {
@@ -75,6 +85,7 @@ export function autoWordsOf(text) {
     if ([...word].length > WORD_MAX_CHARS) continue
     if (/^\d+$/.test(word)) continue
     if (STOP_WORDS.has(word)) continue
+    if (skip.has(word)) continue
     if (seen.has(word)) continue
     seen.add(word)
     out.push(word)

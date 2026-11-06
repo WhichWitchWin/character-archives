@@ -254,3 +254,21 @@ test('冲突显示：只影响注入文本，指针里的组一组不少', () =>
   buildRecallSection({ ...base, snapshot: multiSnapshot, cognition: cognitionOf('latest') })
   assert.equal(multiSnapshot.pt[0][2].length, 3, '快照里的来源组不该被过滤掉')
 })
+
+// 同一个词两边都有时，仍然只加 2 分（不许因为去重把分数改掉）
+test('scorePointer：索引词与自动词撞同一个词时只加 2 分', () => {
+  const { configureWordSegmenter } = indexWords
+  configureWordSegmenter({ tokenize: () => ['收银员'] })
+  const withBoth = scorePointer({
+    claim: claim(10, 'p1', 'a', '在超市当收银员', 3, [{ 词: '收银员', 类: null }]),
+    presentIdSet: new Set(), selfId: 'p1', loc: '', text: '那个收银员抬头', placeWords: new Set(),
+  })
+  const autoOnly = scorePointer({
+    claim: claim(11, 'p1', 'a', '在超市当收银员', 3, []),
+    presentIdSet: new Set(), selfId: 'p1', loc: '', text: '那个收银员抬头', placeWords: new Set(),
+  })
+  configureWordSegmenter(null)
+  assert.equal(withBoth, 2, '两边都有词也只加 2 分')
+  assert.equal(autoOnly, 2, '只有自动词也是 2 分')
+  assert.equal(withBoth, autoOnly, '去重前后分数不变')
+})

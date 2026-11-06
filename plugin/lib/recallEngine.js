@@ -68,11 +68,12 @@ export function scorePointer({ claim, presentIdSet, selfId, loc, text, placeWord
   if (loc && words.some((word) => word?.类 === '地' && word?.词 && loc.includes(word.词))) score += 2
   // ③ 在本轮文本里命中：模型抽的索引词 **＋ 程序从值里自动分出来的通用词**
   //    （2026-11-06：模型只管专名，像「收银员」这种词由程序兜，否则正文聊到它召不回来）
+  //    自动词排除已有索引词，同一个词不重复算（分数本来就是短路只加一次，去重是防歧义）
   void placeWords
   if (text) {
     const body = String(text)
     const picked = words.some((word) => word?.词 && body.includes(word.词))
-    if (picked || autoWordsOf(claim?.[3]).some((word) => body.includes(word))) score += 2
+    if (picked || autoWordsOf(claim?.[3], words).some((word) => body.includes(word))) score += 2
   }
   return score
 }

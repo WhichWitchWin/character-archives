@@ -82,3 +82,22 @@ test('自动抽词：泛词表挡掉高频词，名词照留', () => {
   assert.deepEqual(autoWordsOf('随便'), ['收银员', '超市', '药铺'])
   configureWordSegmenter(null)
 })
+
+// 去重（2026-11-06 用户要求）：同一个词不该既算索引词又算自动词。
+// 注意：打分本来就是「索引词命中 || 自动词命中」，短路只会加一次分；
+// 去重是为了面板不重复显示、也防止以后有人把这里改成累加。
+test('去重：索引词已含的自动词被排除', () => {
+  configureWordSegmenter({ tokenize: () => ['收银员', '超市', '药铺'] })
+  assert.deepEqual(autoWordsOf('随便', ['收银员']), ['超市', '药铺'])
+  assert.deepEqual(autoWordsOf('随便', [{ 词: '超市' }]), ['收银员', '药铺'])
+  assert.deepEqual(autoWordsOf('随便', []), ['收银员', '超市', '药铺'])
+  assert.deepEqual(autoWordsOf('随便'), ['收银员', '超市', '药铺'])
+  configureWordSegmenter(null)
+})
+
+test('去重：索引词为空/undefined 时不误删', () => {
+  configureWordSegmenter({ tokenize: () => ['收银员'] })
+  assert.deepEqual(autoWordsOf('随便', null), ['收银员'])
+  assert.deepEqual(autoWordsOf('随便', undefined), ['收银员'])
+  configureWordSegmenter(null)
+})
