@@ -150,7 +150,8 @@ export function buildWritePrompt({
 }
 
 /**
- * 每轮工单开头的「动态上下文」：本局视角、玩家称呼、代词规则、栏目定义、认知口径、约定规则。
+ * 每轮工单开头的「动态上下文」：本局视角、玩家称呼、代词规则、栏目定义、认知口径。
+ * （约定规则已于 2026-11-06 移回系统提示词，见 ADR 0106；`definitions` 参数保留但不再用）
  *
  * 为什么单独抽出来：成员（member）的系统提示词是**固定**的（每局一次、能缓存），
  * 而这几样每局／每卡都不一样，只能每轮随工单发。
@@ -160,7 +161,7 @@ export function buildWritePrompt({
  *   definitions：本局栏目定义。约定细则已回到系统提示词（ADR 0106），这里只保留参数
  *   以兼容既有调用方；不传不影响任何输出。
  *   cognition：设置里的「认知」组（P20）。**不传就【认知口径】整段不出**——
- *   老调用方（没读设置）行为跟以前完全一样；【约定规则】不依赖 cognition。
+ *   老调用方（没读设置）行为跟以前完全一样。
  */
 export function buildContextText({ viewpoint = '第二人称', playerName = '主角', entriesText = '', definitions = undefined, cognition = undefined } = {}) {
   const name = String(playerName || '主角').trim() || '主角'

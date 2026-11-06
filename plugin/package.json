@@ -1,9 +1,9 @@
 {
-  "name": "dsh-tavern-npc-archives",
+  "name": "character-archives",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "NPC档案馆：把离场的非龙套人物收进人物册，按需召回；人物回场则冻结。",
+  "description": "人物档案馆：把非龙套人物收进人物册，每轮把在场人物「他知道什么」按需注入正文；离场不召回。",
   "exports": {
     ".": "./index.mjs",
     "./client": "./client.js"

@@ -16,14 +16,50 @@
 ## 调试循环
 
 ```bash
-npm run install:dev     # 把 plugin/ 复制到 <数据目录>\plugins\dsh-tavern-npc-archives
+npm run install:dev     # 把 plugin/ 复制到 <数据目录>\plugins\character-archives
 ```
 
 | 改了什么 | 怎么生效 |
 |---|---|
 | `plugin/client.js` | 复制后**刷新酒馆页面**，几秒内换成新代码 |
-| `plugin/index.mjs` | 复制后**必须重启 DSH**（平台限制，绕不过） |
+| `plugin/index.mjs` | 复制后**必须重启酒馆**（平台限制，绕不过）→ 用下面的重启脚本 |
 | 新增 / 删除插件文件夹 | 酒馆的 `fs.watch` 会自己发现，几秒内重新登记 |
+
+### 重启酒馆（DSHT）：`scripts/restart-dsht.cmd`
+
+DSH（桌面版）和 DSHT（酒馆）是**两个独立实例**，进程都叫 `DeepSeek Harness.exe`，在任务管理器里手点很容易把自己正在用的桌面版一起关掉。
+
+```bat
+scripts\restart-dsht.cmd            :: 双击也行 = 重启
+scripts\restart-dsht.cmd status     :: 只看状态
+scripts\restart-dsht.cmd stop       :: 只停
+scripts\restart-dsht.cmd start      :: 只启
+```
+
+它做三件事，按顺序：**停后台 → 关酒馆那个浏览器窗口 → 重新启动（窗口会自己打开）**。
+
+酒馆窗口是 Edge/Chrome 的**应用模式窗口**，标题里带 `DSH Tavern`；脚本靠这个认它。
+只想重启后台、保留窗口的话加 `-KeepBrowser`：
+
+```bat
+scripts\restart-dsht.cmd restart -KeepBrowser
+```
+
+> ⚠️ 重启后**访问凭证（token）会换新**，所以旧窗口本来就打不开了——一起关掉重开才顺手。
+
+窗口行为：**成功就自己关**（停 1 秒多让你看清结果）；**失败会留着**并等你按回车，好读错误。
+`status` 是给人看的，所以读完要按回车才关。被脚本调用（stdin 被重定向）时不会停下来等。
+
+它怎么认出「哪个是酒馆」：
+
+| | 命令行特征 |
+|---|---|
+| **DSHT（酒馆）** | `--profile tavern`／`dsh-tavern\bin\dsh-tavern.mjs`／`tavern-plugin\...\server-template-worker.js` |
+| **DSH（桌面版）** | `--profile desktop`／`dsh-desktop-host\lib\index.js`／`@deepseek-ai/dsh-desktop` |
+
+⚠️ 不能用 `dsh-desktop-host` 当桌面标记——**酒馆根进程的命令行里也有** `…\@deepseek-ai\dsh-desktop-host\lib\cli.js`，会把酒馆误判成桌面版（实际踩过）。
+
+启动走的是和桌面快捷方式同一条路：`wscript.exe launch.vbs`。
 
 加载成功与否看这两个文件（酒馆自动生成，不要手改、不要提交）：
 
@@ -55,7 +91,7 @@ npm test                              # 全部单测，几秒内跑完
 node --test tests/settings.test.mjs   # 只跑一个文件
 ```
 
-- 纯逻辑（快照编解码、字典、信度排序、召回打分、容量水位）**必须有单测，且不需要开酒馆**。
+- 纯逻辑（快照编解码、字典、文本匹配、召回打分、命题与指针、写入校验、提示词模板）**必须有单测，且不需要开酒馆**。
 - 涉及插件接口的部分只能装进酒馆手测。
 - **不要**为了「顺手看一眼」去装依赖或跑酒馆全量测试（上游全量一次约 3 分钟）。
 
@@ -68,20 +104,20 @@ node --test tests/settings.test.mjs   # 只跑一个文件
 
 ## 路线
 
-| 段 | 交付 | 状态 |
-|---|---|---|
-| M1 骨架 | 插件能加载、面板能显示、整局数据能读写 | ✅ 已完成（2026-10-31 实测） |
-| M2 能存 | 快照 `v/t/p` + `gt`、字典 `d/t`、信度位、容量水位、在场名单、暂存批、提示记录 | ✅ 已完成（69 条测试） |
-| M3 能召回 | 匹配 + 打分 + 字数预算 + 冷却，正文前注入 | 待做 |
-| M4 能改 | 结算派活给常驻成员 → 校验 → 落盘；面板编辑 | 待做 |
+进度与模块清单**不在这里重复**，各守一处：
 
-M2 已建：`settings.js`、`dictionary.js`、`snapshot.js`、`confidence.js`、`capacity.js`、`gametime.js`、`notice.js`。M3 还需：`recall.js`、`prompts.js`。**不提前建空文件。**
+- **要做什么、验收标准、哪项还没做完** → [ROADMAP](docs/ROADMAP.md) 第二节版本表与各里程碑清单；
+- **代码里现在有哪些模块、各自干什么** → [DESIGN §十三 代码模块清单](docs/DESIGN.md#十三代码模块清单)（那份是唯一的模块表，新增文件记得补行）。
+
+当前状态一句话：M1 骨架、M2 能存、M3 能召回都已落地并接线；M4 能改的主体（自动写回、面板、导入导出）也已落地；容量执行 2026-11-06 决定不做（[ADR 0097](docs/adr/0097-容量兜底不做.md)），跨插件接口仍未做。
+
+> 想加文件前先看 §十三 有没有同类实现——能复用就别新建（一次只推进一个话题，别顺手重构）。
 
 ### 已验证的平台事实（实测，不是推测）
 
 | 事实 | 证据 |
 |---|---|
-| 插件文件夹放进 `plugins/` 后，酒馆几秒内自动登记并加载，不用重启 | `.tavern-status.json` = `{"ok":true}`；`cordis.patch.yml` 出现 `tavern-user-plugin-dsh-tavern-npc-archives` |
+| 插件文件夹放进 `plugins/` 后，酒馆几秒内自动登记并加载，不用重启 | `.tavern-status.json` = `{"ok":true}`；`cordis.patch.yml` 出现 `tavern-user-plugin-character-archives` |
 | `onTurnSettled` 在正常结算下每轮触发 | 面板显示「最近结算轮次：第 3 轮」 |
 | `saveGameData` / `readGameData` 与 `handle` / `callHost` 通路可用 | 浏览器侧读到了宿主侧写入并存的轮次 |
 | `client.js` 改完复制后，刷新页面即显示新内容 | 侧栏面板与「记录」区出现在页面上 |
@@ -91,31 +127,58 @@ M2 已建：`settings.js`、`dictionary.js`、`snapshot.js`、`confidence.js`、
 
 ## 设计变更怎么记（ADR）
 
-`docs/人物冷存档插件-设计稿.md` **由用户维护**（见 ADR 0003）。AI 不主动改它；实现与它不一致时，写成 **ADR** 存进 `docs/adr/`。
+`docs/DESIGN.md` **由 AI 维护**（见 [ADR 0013](docs/adr/0013-设计稿改由AI维护.md)），只写当前最新状态。**所有重要决策**（不只"与设计稿不一致"的）都写成 ADR 存进 `docs/adr/`（见 [ADR 0012](docs/adr/0012-adr口径扩成行业标准.md)）。
 
 ```text
-docs/adr/0003-简短标题.md
+docs/adr/0014-简短标题.md
 ```
 
 - 文件名四位编号递增，**不复用编号**；
-- 正文四段：`背景 / 决定 / 后果`，另加 `状态`、`日期`；
-- **只增不改**：推翻旧结论时新增一条并标 `supersedes: 第 N 条`，旧条目正文保留；
-- 现行结论以 ADR 为准。代码里出现「设计稿写 X，这里写 Y」时，注释指向对应 ADR 编号。
+- **一条 ADR = 一个决策**，不混批；
+- 正文六段：`背景 / 决定 / 后果 / 被否决的方案 / 待定`，另加 `状态`、`日期`、`supersedes`；
+- **只增不改**：推翻旧结论时新增一条并标 `supersedes: ADR NNNN 中「某条」`，旧条目正文保留；
+- 写完后在 [ADR 索引](docs/adr/README.md) 加一行，再改 `DESIGN.md` 对应小节并标 `见 ADR NNNN`；
+- 两者冲突时**以 `DESIGN.md` 为准**——它是被同步维护的那一份。
 
-现存的：`0001` 设计文档的维护方式、`0002` 人物册放在插件面板、`0003` 设计稿由用户维护（推翻 0001 的「冻结」项）、`0004` 信度来源用人物编号、`0005` 时间只记录不解析、`0006` 字典收录规则调整、`0007` 结算与写入架构（三档写入方式）、`0008` 条目定义放整局数据。
+全部决策的索引见 [docs/adr/README.md](docs/adr/README.md)。
 
-**待清理（有触发条件，别忘了）**：
-
-- `anchors`（整局数据里按人物存的在场名单）是**临时结构**。一旦开始实现「在场人物也进快照」，就要删掉它 —— 那时在场的每个人物本来就在快照里带着自己的 turn 与 gt，这份名单重复了。详见 ADR 0005 末尾。
+**已完成的一条（留档，别再照着写）**：`anchors`（整局数据里按人物存的在场名单）已按 [ADR 0025](docs/adr/0025-离场记录取代在场名单.md) 换成「离场记录」——只在人物离场那一刻记 `{turn, gt}`，在场的人看状态即可；代码里已经搜不到 `anchors`。
 
 ## 提交
 
 - 每完成一个可验收的点就单独提交一次，提交只包含该改动。
 - 提交信息用中文，写清「做了什么 / 为什么」。
 - 不提交：`node_modules/`、`.tavern-entry.mjs`、`.tavern-status.json`、调试产物。
+- `.gitignore` 里的 `backups/` 与 `scripts/` **只挡未跟踪的文件**：`scripts/install-dev.mjs`、`scripts/sync-prompt.mjs` 已经在仓库里，会继续被跟踪、继续给 `npm run install:dev` 用；真正被忽略的是跟本机路径绑定的 `scripts/restart-dsht.cmd`／`.ps1`。`backups/` 是本机备份，不入库（要回退看 git 提交）。
 
 ## 安全
 
 - 禁止 `rm` / `del` / `Remove-Item` 等删除操作；要删一律移进回收站。
 - 动软链接、硬链接前先审查目标（本项目已被 junction 坑过一次，见上）。
 - 重要文件改动前先备份到 `backups/`。
+
+## 装完必须重启：不要"边玩边装"
+
+**改完 `plugin/` 并跑 `install-dev.mjs` 之后，必须让用户重启 DSH，再继续玩。**
+
+为什么：酒馆对插件目录是**热重载**——它加载新代码，但**旧实例注册的回调不会注销**。
+于是同一个进程里会有**两个插件实例**同时响应每轮事件：
+
+| 症状 | 说明 |
+|---|---|
+| **每条调试日志打两遍** | 一份来自新代码，一份来自旧代码（旧的那份没有 `turn` / `kind` 字段，所以显示成 `[info]`） |
+| **同一轮的日志各自成一个"轮次组"** | 新旧交替出现，按相邻归并的分组就散了 |
+| **每轮结算被处理两次** | 多跑一次判定＋写入 → **多花一次模型调用、慢一倍** |
+| 数据写坏 | **通常不会**（两遍算的是同一份状态），但不要依赖这一点 |
+
+**正确顺序**：
+
+```text
+改代码 → install-dev.mjs → 让用户重启 DSH → 再玩
+```
+
+**不要**刚装完就让用户继续玩——那段窗口里就是双份。
+
+排查时如果看到日志成对出现（一条带 `turn`、一条不带），先怀疑这个，别去查业务逻辑。
+
+面板侧（`client.js`）不一样：它只改浏览器产物，**刷新页面**即可，不需要重启。
