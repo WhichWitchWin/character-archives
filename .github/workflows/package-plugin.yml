@@ -1,0 +1,81 @@
+name: Package plugin
+
+# 为什么要有这个工作流：
+# 酒馆的「上传 ZIP」要求 zip 里最浅的 package.json 就是插件清单。
+# 本仓库根目录有开发用的 package.json，所以**不能整仓库打包**——
+# 必须只打 plugin/ 这一层。人手打容易打错，交给 CI。
+#
+# 触发：
+#   · 推到 main      → 跑测试 + 产出 zip（在 Actions 页面下载）
+#   · 推 v* 标签     → 额外把 zip 挂到 GitHub Release 上，供别人直接下载
+#   · 手动触发       → 同上，用于重跑
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+# 发 Release 需要写权限；其余只读
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # 测试不过就不该产出包：装上去坏掉比没装更糟
+      - name: Run tests
+        run: npm test
+
+      # 标签必须与 plugin/package.json 的版本一致，否则 Release 上的包版本会骗人
+      - name: Check tag matches plugin version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          pkg="$(node -p "require('./plugin/package.json').version")"
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$pkg" != "$tag" ]; then
+            echo "::error::标签 $GITHUB_REF_NAME 与 plugin/package.json 的版本 $pkg 不一致"
+            exit 1
+          fi
+
+      # 关键：cd 进 plugin/ 再打包，让 zip 根部直接是 package.json。
+      # 打整个仓库会被酒馆判成「不是 Tavern 插件」。
+      - name: Build plugin zip
+        run: |
+          cd plugin
+          zip -r ../character-archives.zip . -x '*.DS_Store' -x '__MACOSX/*'
+
+      - name: Verify zip layout
+        run: |
+          if ! unzip -l character-archives.zip | grep -qE ' package\.json$'; then
+            echo "::error::zip 根部缺少 package.json"
+            exit 1
+          fi
+          echo "zip 内容（前 20 项）："
+          unzip -l character-archives.zip | head -25
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: character-archives
+          path: character-archives.zip
+          if-no-files-found: error
+
+      # 用 gh 而不是第三方 action：少一个供应链依赖
+      - name: Attach zip to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --generate-notes --title "$GITHUB_REF_NAME"
+          gh release upload "$GITHUB_REF_NAME" character-archives.zip --clobber

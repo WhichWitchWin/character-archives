@@ -47,10 +47,14 @@ And it accepts one awkward truth—**for the same event, A believes it, B denies
 
 ### Option 1: Upload a ZIP (recommended)
 
-1. Get the package—download this repo via **Code → Download ZIP**, or use a package someone gave you
-2. Extract it, then **compress only the `plugin/` folder** into a zip
-3. In the tavern: **Settings → Tavern Plugins → Upload ZIP**, and pick that zip
-4. The host loads it within a few seconds; **refresh the browser** and it appears in the sidebar
+**Step 1: get the package** (either way)
+
+- **Easiest**: download the ready-made `character-archives.zip` from [Releases](https://github.com/WhichWitchWin/character-archives/releases) (built by CI, ready to use)
+- **Build it yourself**: download this repo → extract → **compress only the `plugin/` folder** into a zip
+
+**Step 2**: in the tavern, open **Settings → Tavern Plugins → Upload ZIP** and pick that zip.
+
+**Step 3**: the host loads it within a few seconds; **refresh the browser** and it appears in the sidebar.
 
 > ⚠️ **Do not zip the whole repository**
 > The installer treats the **shallowest `package.json`** as the plugin root. This repo has a `package.json` at the top level (for dev scripts), so a whole-repo zip makes it win over `plugin/package.json`, and the install fails with:

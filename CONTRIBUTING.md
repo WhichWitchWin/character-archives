@@ -144,6 +144,28 @@ docs/adr/0014-简短标题.md
 
 **已完成的一条（留档，别再照着写）**：`anchors`（整局数据里按人物存的在场名单）已按 [ADR 0025](docs/adr/0025-离场记录取代在场名单.md) 换成「离场记录」——只在人物离场那一刻记 `{turn, gt}`，在场的人看状态即可；代码里已经搜不到 `anchors`。
 
+## 发版与打包（CI 自动）
+
+插件包由 `.github/workflows/package-plugin.yml` 自动打，**不要手工打包**。
+
+**为什么不能手工打整仓库**：酒馆安装器按「最浅的那个 `package.json`」认插件根，而仓库根有开发用的 `package.json`，整包上传会报 `package.json 没有写宿主入口（exports "." 或 main），不是 Tavern 插件`。所以 CI 固定 `cd plugin && zip -r ../character-archives.zip .`，让 zip 根部直接是 `plugin/package.json`。
+
+**发一个新版本**：
+
+```bash
+# 1. 先改版本号（插件本体那份）
+#    plugin/package.json → "version": "0.2.0"
+# 2. 提交
+git commit -am "chore: 版本 0.2.0"
+# 3. 打标签并推（标签必须与 plugin/package.json 的版本一致，CI 会校验）
+git tag v0.2.0
+git push origin main --tags
+```
+
+CI 会依次：跑全量测试 → 校验标签与版本一致 → 打包 → 校验 zip 根部有 `package.json` → 上传 Artifact → 把 zip 挂到 GitHub Release。
+
+只想拿一个包、不发版：推到 `main` 后到 Actions 页面下载 `character-archives` 这个 Artifact。
+
 ## 提交
 
 - 每完成一个可验收的点就单独提交一次，提交只包含该改动。
