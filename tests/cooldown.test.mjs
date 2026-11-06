@@ -1,84 +1,71 @@
-// 召回冷却（设计稿 §7.5、§3.6）
+// 召回冷却（ADR 0086）
 //
-// 三个层次别混（§7.5）：
-//   1. 是否允许召回 —— 由冷却决定，是闸门；
-//   2. 是否真的召回 —— 由姓名／别名／线索命中决定；
-//   3. 召回什么 —— 全量，或简版＋相关条目。
-//
-// 粒度：全量召回冷却**整个人物**；简版／连带召回只冷却**给过的具体条目**。
-// 0 轮＝无冷却。冷却结束（当前轮 ≥ 截止轮）就**立刻删掉这条记录**——它的使命已经结束。
-// 这样回退也安全：未到期的记录还在（冷却仍生效），已到期的早删了（本来也该允许召回）。
+// 粒度是**指针级**：一条指针 = 某人 × 某条命题 × 一条认知，键 `pt:人物id:命题id`。
+// 旧的人物级／条目级键已随「命题＋指针」改造退役（2026-11-05），那些函数本来也没有生产调用。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
   DEFAULT_COOLDOWN_TURNS,
-  createCooldowns,
-  entryKey,
-  isCoolingDown,
-  personKey,
+  isPointerCoolingDown,
+  pointerKey,
   pruneExpired,
-  rememberRecall,
 } from '../plugin/lib/cooldown.js'
+
+const ptr = (personId, claimId, lastTurn) => [personId, claimId, [[0, '']], lastTurn]
 
 test('默认冷却 10 轮', () => {
   assert.equal(DEFAULT_COOLDOWN_TURNS, 10)
 })
 
-test('记一次召回：写下来源轮与截止轮', () => {
-  const cooldowns = rememberRecall(createCooldowns(), 'p:p1', 10)
-  assert.deepEqual(cooldowns['p:p1'], { lastTurn: 10, until: 20 })
+test('指针键的格式', () => {
+  assert.equal(pointerKey('p1', 9), 'pt:p1:9')
 })
 
-test('冷却中返回 true，到点返回 false', () => {
-  const cooldowns = rememberRecall(createCooldowns(), 'p:p1', 10, 10)
-  assert.equal(isCoolingDown(cooldowns, 'p:p1', 15), true)
-  assert.equal(isCoolingDown(cooldowns, 'p:p1', 19), true)
-  assert.equal(isCoolingDown(cooldowns, 'p:p1', 20), false)
-  assert.equal(isCoolingDown(cooldowns, 'p:p1', 25), false)
+// ── 三个盖章时机（ADR 0086）──
+
+test('建立/修改章：刚变过的指针不给（当前轮 − 最后变动轮 < N）', () => {
+  assert.equal(isPointerCoolingDown({}, ptr('p1', 9, 20), 20, 10), true)
+  assert.equal(isPointerCoolingDown({}, ptr('p1', 9, 20), 25, 10), true)
+  assert.equal(isPointerCoolingDown({}, ptr('p1', 9, 20), 30, 10), false)
 })
 
-test('没记过的、或者 0 轮冷却，一律不算冷却中', () => {
-  const cooldowns = createCooldowns()
-  assert.equal(isCoolingDown(cooldowns, 'p:p1', 5), false)
-
-  const noCooldown = rememberRecall(cooldowns, 'p:p1', 10, 0)
-  assert.deepEqual(noCooldown, {})                       // 0 轮 = 不记
-  assert.equal(isCoolingDown(noCooldown, 'p:p1', 10), false)
+test('召回章：冷却表里有记录、还没到期就不给', () => {
+  const cooldowns = { [pointerKey('p1', 9)]: { lastTurn: 20, until: 30 } }
+  assert.equal(isPointerCoolingDown(cooldowns, ptr('p1', 9, 5), 25, 10), true)
+  assert.equal(isPointerCoolingDown(cooldowns, ptr('p1', 9, 5), 30, 10), false)
 })
 
-test('人物级与条目级互不影响', () => {
-  let cooldowns = createCooldowns()
-  cooldowns = rememberRecall(cooldowns, personKey('p1'), 10)
-  cooldowns = rememberRecall(cooldowns, entryKey('p2', 'a'), 10)
-  assert.equal(isCoolingDown(cooldowns, personKey('p1'), 12), true)
-  assert.equal(isCoolingDown(cooldowns, personKey('p2'), 12), false)
-  assert.equal(isCoolingDown(cooldowns, entryKey('p2', 'a'), 12), true)
-  assert.equal(isCoolingDown(cooldowns, entryKey('p1', 'a'), 12), false)
+test('轮数 0 等于关掉冷却，一律放行', () => {
+  const cooldowns = { [pointerKey('p1', 9)]: { lastTurn: 20, until: 30 } }
+  assert.equal(isPointerCoolingDown(cooldowns, ptr('p1', 9, 20), 20, 0), false)
 })
+
+test('不同人的同一条命题互不影响', () => {
+  const cooldowns = { [pointerKey('p1', 9)]: { lastTurn: 20, until: 30 } }
+  assert.equal(isPointerCoolingDown(cooldowns, ptr('p2', 9, 5), 25, 10), false)
+})
+
+test('脏指针不炸：不是数组、轮次不是整数一律放行', () => {
+  assert.equal(isPointerCoolingDown({}, null, 10, 10), false)
+  assert.equal(isPointerCoolingDown({}, ptr('p1', 9, 5), null, 10), false)
+})
+
+// ── 清理 ──
 
 test('到期即删：只留还没到期的', () => {
-  let cooldowns = createCooldowns()
-  cooldowns = rememberRecall(cooldowns, 'p:早', 10, 5)   // 截止 15
-  cooldowns = rememberRecall(cooldowns, 'p:晚', 18, 5)   // 截止 23
+  const cooldowns = {
+    'pt:p1:1': { lastTurn: 10, until: 15 },   // 截止 15
+    'pt:p2:3': { lastTurn: 18, until: 23 },   // 截止 23
+  }
   const pruned = pruneExpired(cooldowns, 20)
-  assert.deepEqual(Object.keys(pruned), ['p:晚'])
-  assert.equal(pruned['p:晚'].until, 23)
+  assert.deepEqual(Object.keys(pruned), ['pt:p2:3'])
+  assert.equal(pruned['pt:p2:3'].until, 23)
 })
 
-test('归档缓冲：以最后一次在场轮为基准，不是判定轮或写入轮', () => {
-  // 最后在场第 10 轮；第 13 轮才判定离场；第 16 轮才真正写进快照。缓冲 10 轮。
-  const cooldowns = rememberRecall(createCooldowns(), personKey('p7'), 10, 10)
-  assert.equal(isCoolingDown(cooldowns, personKey('p7'), 13), true)  // 判定轮仍在缓冲
-  assert.equal(isCoolingDown(cooldowns, personKey('p7'), 19), true)  // 写入轮之后仍在缓冲
-  assert.equal(isCoolingDown(cooldowns, personKey('p7'), 20), false) // 距最后在场满 10 轮，恢复召回
-})
-
-test('是纯函数，不改原对象；记第二次会覆盖', () => {
-  const original = rememberRecall(createCooldowns(), 'p:p1', 10, 5)
-  rememberRecall(original, 'p:p1', 30, 5)
-  assert.equal(original['p:p1'].until, 15)
-
-  const again = rememberRecall(original, 'p:p1', 30, 5)
-  assert.deepEqual(again['p:p1'], { lastTurn: 30, until: 35 })
+test('清理是纯函数，不改原表；空表也不炸', () => {
+  const cooldowns = { 'pt:p1:1': { lastTurn: 10, until: 15 } }
+  pruneExpired(cooldowns, 20)
+  assert.equal(cooldowns['pt:p1:1'].until, 15, '原表不该被改')
+  assert.deepEqual(pruneExpired(undefined, 5), {})
 })

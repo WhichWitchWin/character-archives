@@ -2,7 +2,7 @@
 //
 //   npm run install:dev
 //
-// 默认目标：~/.dsh/profile-data/tavern/data/plugins/dsh-tavern-npc-archives
+// 默认目标：~/.dsh/profile-data/tavern/data/plugins/character-archives
 // 可用环境变量 TAVERN_PLUGINS_DIR 指到别处（手机、另一个 DSH_HOME 等）。
 //
 // 注意：
@@ -14,7 +14,7 @@ import { cpSync, existsSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 
-const PLUGIN_NAME = 'dsh-tavern-npc-archives'
+const PLUGIN_NAME = 'character-archives'
 
 const source = resolve(import.meta.dirname, '..', 'plugin')
 const target =

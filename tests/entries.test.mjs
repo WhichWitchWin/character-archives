@@ -11,14 +11,14 @@ import {
   pruneFrom,
 } from '../plugin/lib/entries.js'
 
-const def = (name, extra = {}) => ({ name, prompt: '', unique: false, mode: 'value', ...extra })
+const def = (name, extra = {}) => ({ name, prompt: '', ...extra })
 
-test('单字母码池：51 个，且不含大写 X', () => {
-  assert.equal(SINGLE_CODES.length, 51)
-  assert.equal(SINGLE_CODES.includes('X'), false)
+test('单字母码池：52 个（大小写各 26）', () => {
+  assert.equal(SINGLE_CODES.length, 52)
+  assert.equal(new Set(SINGLE_CODES).size, 52)
   assert.ok(SINGLE_CODES.includes('a'))
-  assert.ok(SINGLE_CODES.includes('W'))
-  assert.ok(SINGLE_CODES.includes('Y'))
+  assert.ok(SINGLE_CODES.includes('X'))
+  assert.ok(SINGLE_CODES.includes('Z'))
 })
 
 test('第一个空闲码是 a，用过之后顺延', () => {

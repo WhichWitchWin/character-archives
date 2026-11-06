@@ -4,63 +4,59 @@
 // 它刻意用「短键 + 数组」而不是对象：字段名占的字节也算在 64 KB 里。
 //
 // 结构（字段顺序永不改变，新字段一律加在末尾）：
-//   { "v": 1, "t": 40, "p": [ 人物... ], "gt": "三年五月十二日" }
-//   人物 = ["p7", 状态, "姓名", [条目...], "召回词串"]
-//   条目 = ["a", 值, "信度位", 轮次]          ← 当轮写入
-//   条目 = ["a", 值, "信度位", 轮次, "gt"]    ← 延后写入，自带捕获时的游戏时间
+//   { "v": 1, "t": 40, "p": [ 人物... ], "gt": "三年五月十二日", "loc": "临安·旧港",
+//     "c": [ 命题... ], "pt": [ 指针... ] }
+//   人物 = ["p7", 状态, "姓名", "别名串"]
 //
-// 值位置靠 JSON 类型区分：字符串＝原文，数字＝字典下标（见 dictionary.js）。
-// **姓名按原文存放、不进字典**（§4.1）—— 回退到改名之前的那份快照时，
+// 姓名按原文存放、不进字典（§4.1）—— 回退到改名之前的那份快照时，
 // 看到的自然是当时的旧名字，不会剧透后来的新名字（ADR 0004）。
 //
 // 读到坏东西的策略（§4.8「不清空、不覆盖」）：
 //   - 顶层结构坏了 → 整份拒绝，调用方不许覆盖存档；
-//   - 单个坏人物 / 坏条目 / 解不开的字典下标 → **只丢那一个**，其余照常读出，记进 problems。
+//   - 单个坏人物 → 只丢那一个，其余照常读出，记进 problems。
 //
 // 纯逻辑模块：不 import 酒馆接口、不接触 ctx。
 
-import { parseConfidence } from './confidence.js'
-
 export const SNAPSHOT_VERSION = 1
 
-/** 状态字段：把「位置状态」和「资料是否容灾」打包在一个数字里（设计稿第二节）。 */
+/** 状态字段：只有离场／在场两个值（ADR 0045 砍掉了资料容灾）。 */
 export const STATUS = Object.freeze({
-  OFFLINE: 0,     // 离场
-  PRESENT: 1,     // 在场
-  MVU_OFFLINE: 2, // 离场·资料容灾
-  MVU_PRESENT: 3, // 在场·资料容灾
+  OFFLINE: 0, // 离场
+  PRESENT: 1, // 在场
 })
 
-const PERSON_FIELDS = 5
-const ENTRY_FIELDS = 4
+const PERSON_FIELDS = 4
 
-export function createSnapshot(turn, gt = '') {
-  return { v: SNAPSHOT_VERSION, t: turn, p: [], gt }
-}
-
-export function createPerson(id, status, name, entries = [], triggers = '') {
-  return [id, status, name, entries, triggers]
+export function createSnapshot(turn, gt = '', loc = '') {
+  return { v: SNAPSHOT_VERSION, t: turn, p: [], gt, loc, c: [], pt: [] }
 }
 
 /**
- * 条目：4 元素；给了 gt 才是 5 元素。
- * 空 gt 一律省略 —— 60 个值 × 2000 份快照，空串占位会白扔约 360 KB。
+ * 定位「现在该读哪一轮的快照」。
+ *
+ * 整局数据里的 `updatedTurn` 是**我们上次结算的轮次**，剧情回退时它不会自己变小
+ * （回退只动酒馆的正文与按轮数据，不动插件自己写的那份整局数据，B1）。所以定位轮次
+ * 必须先问酒馆当前状态（`getTurnState().turn`，官方文档明确「回退、重新生成后读到的是
+ * 回退后的当前状态」），拿不到才回落 `updatedTurn`。
+ *
+ * @param {{updatedTurn?:number|null, turnState?:{turn?:number}|null}} input
+ * @returns {number|null}
  */
-export function createEntry(code, value, confidence, turn, gt = '') {
-  const entry = [code, value, confidence, turn]
-  if (gt) entry.push(gt)
-  return entry
+export function resolveTurn({ updatedTurn = null, turnState = null } = {}) {
+  const now = turnState && Number.isInteger(turnState.turn) && turnState.turn >= 1
+    ? turnState.turn
+    : null
+  if (now != null) return now
+  return Number.isInteger(updatedTurn) && updatedTurn >= 1 ? updatedTurn : null
 }
 
 /**
  * 校验并读入一份快照。
  * @param {object} raw 落盘的快照
- * @param {{dict?: {decode: (value:number)=>string|null}}} options
- *   传了 dict 就顺带核对字典下标：越界、或者字典是空的，就把这条值甩掉（空字典不放行）。
  * @returns {{ok: true, snapshot: object, reason: null, problems: string[]}
  *          | {ok: false, snapshot: null, reason: string, problems: string[]}}
  */
-export function readSnapshot(raw, { dict = null } = {}) {
+export function readSnapshot(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('快照不是对象')
   if (!Number.isInteger(raw.v) || raw.v < 1) return fail('结构版本 v 不是正整数')
   if (raw.v > SNAPSHOT_VERSION) return { ok: false, snapshot: null, reason: 'upgrade-required', problems: [] }
@@ -73,14 +69,37 @@ export function readSnapshot(raw, { dict = null } = {}) {
   else if (typeof raw.gt === 'string') gt = raw.gt
   else problems.push('快照头的时间不是字符串，已当作空')
 
+  // 剧情发生地点：跟 gt 一样只存原文；脏数据当空串，不让整份快照作废
+  let loc = ''
+  if (raw.loc === undefined || raw.loc === null) loc = ''
+  else if (typeof raw.loc === 'string') loc = raw.loc
+  else problems.push('快照头的地点不是字符串，已当作空')
+
   const people = []
   for (const person of raw.p) {
-    const copy = readPerson(person, problems, dict)
+    const copy = readPerson(person, problems)
     if (copy) people.push(copy)
   }
 
+  // 命题表 / 指针表（ADR 0081/0083）：旧快照没有这两块，补空数组即可。
+  // 不升级版本号——新字段加在末尾是向后兼容的，v 只在结构不兼容时升。
+  let claims = []
+  if (raw.c === undefined || raw.c === null) claims = []
+  else if (Array.isArray(raw.c)) claims = raw.c.filter((claim) => Array.isArray(claim)).map((claim) => [...claim])
+  else problems.push('命题表不是数组，已当作空')
+
+  let pointers = []
+  if (raw.pt === undefined || raw.pt === null) pointers = []
+  else if (Array.isArray(raw.pt)) pointers = raw.pt.filter((pointer) => Array.isArray(pointer)).map((pointer) => [...pointer])
+  else problems.push('指针表不是数组，已当作空')
+
   // 顶层与人物都整份复制：读回来的东西随便改，不会反噬存档对象。
-  return { ok: true, snapshot: { ...raw, v: raw.v, t: raw.t, p: people, gt }, reason: null, problems }
+  return {
+    ok: true,
+    snapshot: { ...raw, v: raw.v, t: raw.t, p: people, gt, loc, c: claims, pt: pointers },
+    reason: null,
+    problems,
+  }
 }
 
 /**
@@ -94,68 +113,32 @@ export function findPerson(snapshot, id) {
   return snapshot.p.find((person) => Array.isArray(person) && person[0] === id) ?? null
 }
 
-function readPerson(person, problems, dict) {
+function readPerson(person, problems) {
   if (!Array.isArray(person) || person.length < PERSON_FIELDS) {
-    problems.push('有一个人物不是 5 元素以上的数组，已跳过')
+    problems.push('有一个人物不是 4 元素以上的数组，已跳过')
     return null
   }
 
-  const [id, status, name, entries, triggers] = person
+  const [id, status, name, aliases] = person
+
   if (typeof id !== 'string' || !id) {
     problems.push('有一个人物的编号不是字符串，已跳过')
     return null
   }
-  if (!Number.isInteger(status) || status < STATUS.OFFLINE || status > STATUS.MVU_PRESENT) {
-    problems.push(`人物 ${id} 的状态不在 0～3（${status}），已跳过`)
+  if (!Number.isInteger(status) || status < STATUS.OFFLINE || status > STATUS.PRESENT) {
+    problems.push(`人物 ${id} 的状态不在 0～1（${status}），已跳过`)
     return null
   }
   if (typeof name !== 'string') {
     problems.push(`人物 ${id} 的姓名不是字符串，已跳过`)
     return null
   }
-  if (!Array.isArray(entries)) {
-    problems.push(`人物 ${id} 的条目不是数组，已跳过`)
-    return null
-  }
-  if (typeof triggers !== 'string') {
-    problems.push(`人物 ${id} 的召回词不是字符串，已跳过`)
+  if (typeof aliases !== 'string') {
+    problems.push(`人物 ${id} 的别名不是字符串，已跳过`)
     return null
   }
 
-  const copiedEntries = []
-  for (const entry of entries) {
-    const copy = readEntry(entry, dict)
-    if (copy) copiedEntries.push(copy)
-    else problems.push(`人物 ${id} 有一条条目结构不对，已跳过`)
-  }
-
-  const copy = [...person]
-  copy[3] = copiedEntries
-  return copy
-}
-
-function readEntry(entry, dict) {
-  if (!Array.isArray(entry) || entry.length < ENTRY_FIELDS) return null
-
-  const [code, value, confidence, turn] = entry
-  if (typeof code !== 'string' || !code) return null
-
-  // 值位置：字符串＝原文，数字＝字典下标。下标必须是非负安全整数。
-  const isText = typeof value === 'string'
-  const isIndex = Number.isSafeInteger(value) && value >= 0
-  if (!isText && !isIndex) return null
-  // 传了字典就核对：解不出文字（越界 / 字典为空）就把这条值甩掉，免得静默变成空白。
-  if (isIndex && dict && typeof dict.decode(value) !== 'string') return null
-
-  // 信度位不只要"是字符串"，还得语法合法 —— 否则坏码会安静躺着，
-  // 直到关闭信度那天被当成坏值丢掉，中间没有任何记录。
-  if (typeof confidence !== 'string' || !parseConfidence(confidence)) return null
-  if (typeof turn !== 'number') return null
-
-  // 第 5 位是可选 gt：有就必须是字符串
-  if (entry.length > ENTRY_FIELDS && typeof entry[4] !== 'string') return null
-
-  return [...entry]
+  return [id, status, name, aliases]
 }
 
 /** UTF-8 字节数。64 KB 上限与 8 MB 总量都按这个口径算（§3.2）。 */
@@ -166,4 +149,25 @@ export function byteSize(value) {
 
 function fail(reason) {
   return { ok: false, snapshot: null, reason, problems: [] }
+}
+/**
+ * 读快照；**读不到就造一份空的**。
+ *
+ * 为什么需要：第一轮根本没有快照，而写回的逻辑是「读快照 → 改 → 写回」——
+ * 读失败就 return 的话，第一份快照永远造不出来，整个写回链路死锁。
+ *
+ * @param {any} raw readTurnData 的返回值（可能为 null）
+ * @param {number} turn 轮次
+ * @param {{gt?:string}} [options]
+ * @returns {{ok:true, snapshot:object, bootstrapped:boolean, problems:string[]}}
+ */
+export function readOrCreateSnapshot(raw, turn, { gt = '' } = {}) {
+  const parsed = readSnapshot(raw)
+  if (parsed.ok) return { ok: true, snapshot: parsed.snapshot, bootstrapped: false, problems: parsed.problems }
+  return {
+    ok: true,
+    snapshot: createSnapshot(Number.isInteger(turn) ? turn : 0, typeof gt === 'string' ? gt : ''),
+    bootstrapped: true,
+    problems: parsed.problems ?? [],
+  }
 }

@@ -144,7 +144,7 @@ class Dictionary {
   /**
    * 可以回收的下标：任何现存快照都没引用它（§4.6）。
    * 升序返回 —— 因为新增即 push，排在前面的就是最早收录的。
-   * 信度位用的是人物编号（ADR 0004），所以引用集只来自「值位置」的数字。
+   * 引用集只来自命题内容里的数字（原文存字典下标时才是数字）。
    */
   unusedSlots(referenced = new Set()) {
     const used = referenced instanceof Set ? referenced : new Set(referenced)

@@ -1,53 +1,45 @@
-// 人物冷存档 · 召回冷却（设计稿 §7.5、§3.6）
+// 召回冷却（ADR 0086）
 //
-// 三个层次别混（§7.5）：
-//   1. 是否允许召回 —— 由冷却决定，是闸门；
-//   2. 是否真的召回 —— 由姓名／别名／线索命中决定；
-//   3. 召回什么 —— 全量，或简版＋相关条目。
+// **粒度是指针级**：一条指针 = 某人 × 某条命题 × 一条认知。键是 `pt:人物id:命题id`。
 //
-// 粒度：**全量召回冷却整个人物**；简版／连带召回只冷却**给过的具体条目**。
-// 0 轮 = 无冷却（不记）。
+// 判"这条现在能不能给"要三个盖章时机合起来看：
+//   ① **建立**：指针第 4 格（最后变动轮）——`当前轮 − 它 < N` → 冷却中；
+//   ② **修改**：同上，改一次就刷新；
+//   ③ **召回**：冷却表里 `until > 当前轮` → 冷却中。
 //
-// 清理规则：冷却一结束（当前轮 ≥ 截止轮）就**立刻删掉那条记录** —— 它的使命已经结束，
-// 留着只会让整局数据越积越多。这样回退也安全：
-//   - 未到期的记录还在 → 冷却仍生效；
-//   - 已到期的早删了 → 回退到更早轮次时，本来也该允许召回。
+// 轮数 <= 0 表示关掉冷却，一律放行。
+//
+// **清理**：`pruneExpired` 到期即删——它的使命已经结束，留着只会让整局数据越积越多。
+// 这样回退也安全：未到期的记录还在（冷却仍生效）；已到期的早删了（本来也该允许召回）。
 //
 // 纯逻辑模块：不 import 酒馆接口、不接触 ctx，数据进数据出。
 
 export const DEFAULT_COOLDOWN_TURNS = 10
 
-/** 冷却表的初始形状：键是 personKey / entryKey。 */
-export function createCooldowns() {
-  return {}
-}
-
-/** 人物级键（全量召回用）。 */
-export function personKey(personId) {
-  return `p:${personId}`
-}
-
-/** 条目级键（简版／连带召回用）。 */
-export function entryKey(personId, code) {
-  return `e:${personId}:${code}`
+/** 指针级键（ADR 0086）：一个人对一条命题的一条认知。 */
+export function pointerKey(personId, claimId) {
+  return `pt:${personId}:${claimId}`
 }
 
 /**
- * 记一次召回。
- * @param {number} turns 冷却轮数；<= 0 表示无冷却，不记录
+ * 这条指针现在能不能给（ADR 0086）。
+ *
+ * @param {object} cooldowns 冷却表
+ * @param {any[]} pointer 指针 `[人物id, 命题id, 来源组, 最后变动轮]`
+ * @param {number} turn 当前轮
+ * @param {number} turns 冷却轮数
+ * @returns {boolean}
  */
-export function rememberRecall(cooldowns, key, turn, turns = DEFAULT_COOLDOWN_TURNS) {
-  const next = { ...(cooldowns ?? {}) }
-  if (!(turns > 0)) return next
-  next[key] = { lastTurn: turn, until: turn + turns }
-  return next
-}
+export function isPointerCoolingDown(cooldowns, pointer, turn, turns = DEFAULT_COOLDOWN_TURNS) {
+  if (!(turns > 0)) return false
+  if (!Array.isArray(pointer)) return false
+  if (!Number.isInteger(turn)) return false
 
-/** 这个键在当前轮还在冷却里吗。没记过 = 不在冷却。 */
-export function isCoolingDown(cooldowns, key, turn) {
-  const record = cooldowns?.[key]
-  if (!record) return false
-  return turn < record.until
+  const lastTurn = Number.isInteger(pointer[3]) ? pointer[3] : 0
+  if (turn - lastTurn < turns) return true
+
+  const record = cooldowns?.[pointerKey(pointer[0], pointer[1])]
+  return Boolean(record && Number.isInteger(record.until) && turn < record.until)
 }
 
 /** 删掉已经到期的记录（当前轮 ≥ 截止轮）。 */
