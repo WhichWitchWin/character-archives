@@ -267,3 +267,20 @@ test('设置分组：这一组叫「离场」，不再叫「首次离场」', ()
   assert.ok(titles.includes('离场'), '要有「离场」这一组')
   assert.ok(!titles.includes('首次离场'), '不该再叫「首次离场」')
 })
+
+// 「离场」组里两个没接线的开关也隐藏（2026-11-06 用户选 A）。
+// 查证：firstExit.mode / firstExit.nominationTurns 只出现在设置页渲染代码里，
+// 没有任何业务逻辑读过——选自动还是手动，程序行为完全一样。
+// 只有 fuzzyTurns 是真的在起作用（fuzzyLeaveIds 用它判连续 N 轮没露面）。
+test('离场组：只留「模糊离场判定轮数」，另外两项隐藏', () => {
+  const sections = describeSettings(DEFAULT_SETTINGS, DEFAULT_SETTINGS)
+  const group = sections.flatMap((s) => s.groups).find((g) => g.title === '离场')
+  assert.ok(group, '「离场」这一组要留着')
+  assert.deepEqual(group.items.map((i) => i.path), ['firstExit.fuzzyTurns'], '只留真正起作用的那一项')
+})
+
+test('离场组：隐藏只影响展示，定义仍在（findSetting 找得到）', () => {
+  assert.ok(findSetting('firstExit.mode'), 'mode 定义要保留')
+  assert.ok(findSetting('firstExit.nominationTurns'), 'nominationTurns 定义要保留')
+  assert.ok(findSetting('firstExit.fuzzyTurns'))
+})

@@ -80,6 +80,9 @@ export const SETTING_SCHEMA = Object.freeze([
         path: 'firstExit.mode',
         label: '写入方式',
         type: 'select',
+        // 先隐藏（2026-11-06）：firstExit.mode 只出现在设置渲染里，**没有任何业务逻辑读过**，
+        // 选自动还是手动程序行为完全一样。定义留着，真要实现手动模式时去掉 hidden 即可。
+        hidden: true,
         options: [
           { value: 'auto', label: '自动写入' },
           { value: 'manual', label: '手动写入' },
@@ -98,6 +101,7 @@ export const SETTING_SCHEMA = Object.freeze([
         path: 'firstExit.nominationTurns',
         label: '手动提名的停留轮数',
         type: 'number',
+        hidden: true,   // 同上：没有任何逻辑读它，配套「手动写入」一起隐藏
         min: 1,
         max: 5,
         hint: '手动模式下，这个人挂在待确认里多少轮。',
