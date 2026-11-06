@@ -2,6 +2,9 @@
 
 简体中文 | [English](README.en.md)
 
+[![Package plugin](https://github.com/WhichWitchWin/character-archives/actions/workflows/package-plugin.yml/badge.svg)](https://github.com/WhichWitchWin/character-archives/actions/workflows/package-plugin.yml)
+[![Release](https://img.shields.io/github/v/release/WhichWitchWin/character-archives?style=flat-square)](https://github.com/WhichWitchWin/character-archives/releases)
+
 > 给 DSH Tavern 的第三方插件。让 NPC **记得住自己知道什么**，并在写正文时把这些记忆按需递给模型。
 
 ---
@@ -219,6 +222,10 @@ scripts/           开发脚本（装到酒馆、同步提示词副本）
 - **还没做**：跨插件接口、同名不同人、栏目预设单独导入导出、非 MVU 卡的游戏内时间
 
 各版本的验收标准与待办见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+
+---
+
+[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
 
 ---
 

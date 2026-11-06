@@ -2,6 +2,9 @@
 
 English | [简体中文](README.md)
 
+[![Package plugin](https://github.com/WhichWitchWin/character-archives/actions/workflows/package-plugin.yml/badge.svg)](https://github.com/WhichWitchWin/character-archives/actions/workflows/package-plugin.yml)
+[![Release](https://img.shields.io/github/v/release/WhichWitchWin/character-archives?style=flat-square)](https://github.com/WhichWitchWin/character-archives/releases)
+
 > A third-party plugin for DSH Tavern. It gives NPCs a **memory of what they know**, and hands the relevant parts to the model when your story is being written.
 
 ---
@@ -221,6 +224,10 @@ Not yet.
 - **Not implemented**: cross-plugin API, same-name different-person, standalone preset import/export, in-game time for non-MVU cards
 
 Per-version acceptance criteria and remaining work: [docs/ROADMAP.md](docs/ROADMAP.md).
+
+---
+
+[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
 
 ---
 
