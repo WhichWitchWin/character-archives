@@ -530,6 +530,42 @@ test('交卷形状：解析前要剥壳，且判定阶段留痕', () => {
 // 分叉＝新 gameId，而插件自己的文件按 gameId 存（官方文档：自己写的文件不会随分叉带走），
 // 所以要在宿主通知 `kind:'fork'` 后把父局搬一份给新局。这组守卫钉住「订阅了／只认 fork／
 // 会搬三样东西／不覆盖已有进度」。
+// ── 手动补写（ADR 0111）──
+// 自动写回是「射后不管」的后台任务，模型交空或中途失败时那一轮就永久缺了；
+// 面板上一个按钮让它再跑一次，复用自动结算那套 runWriteback，不另写一套写入逻辑。
+test('补写：handle 复用 runWriteback，结算中拒绝，补完落盘', () => {
+  assert.ok(source.includes("'character-archives/retry-writeback'"), '要注册 retry-writeback')
+  const at = source.indexOf("'character-archives/retry-writeback'")
+  // 切到**下一个 handle** 为止：固定字符数会跨进 export 那一段，以后就假通过了
+  const next = source.indexOf('ctx.tavern.handle(', at + 10)
+  const block = source.slice(at, next > at ? next : at + 3000)
+  assert.ok(block.includes('retryRefusal('), '能不能补交给纯逻辑判（结算中/没结算过/写入关了）')
+  assert.ok(block.includes('getTurnState('), '要先问宿主「这一轮忙不忙」')
+  assert.ok(block.includes('runWriteback('), '要复用自动结算那套写回，不另写一套')
+  assert.ok(block.includes('saveGameState('), '补完要落盘')
+  assert.ok(block.includes('retrySummary('), '回执用一句话人话')
+  assert.ok(source.includes('retryLocks'), '同一局同时只许补一次（双击/两头点都不打架）')
+  // 宿主不知道插件自己的后台写回在跑：必须自己打标记，否则同一轮会并发跑两遍（评审 C1）
+  assert.ok(source.includes('writebackInFlight'), '要有「这一轮写回在跑」的标记')
+  assert.match(source, /writebackInFlight\.add\(flight\)[\s\S]{0,200}?runWriteback\(/, '自动写回那一路要打标记')
+  assert.ok(block.includes('writebackInFlight.has('), '补写前要判「这一轮的自动写回还在跑」')
+  // 补写要跑模型，期间玩家可能已经推进到下一轮：不能拿旧 state 整份覆盖回去
+  assert.ok(block.includes('nowTurn !== turn'), '剧情推进了就作废这次结果，别覆盖新状态')
+  // 不传 mvu 的话补出来的指针会挂上一轮的旧游戏时间
+  assert.ok(block.includes('parseMvu('), '要现取 MVU 变量')
+  // 补完要通知面板，不然其它打开的面板一直是旧档案
+  assert.ok(block.includes('publishArchiveChanged('), '补完要推「档案变了」')
+  // 只补最新一轮：轮次必须来自宿主状态，不许面板传进来
+  assert.ok(!/retry-writeback[\s\S]{0,800}?turn:\s*Number\(payload/.test(source), '不许让面板指定轮次')
+})
+
+test('补写：面板上有「补写这一轮」按钮，并调这个 handle', async () => {
+  const client = readFileSync(fileURLToPath(new URL('../plugin/client.js', import.meta.url)), 'utf8')
+  assert.ok(client.includes('补写这一轮'), '按钮文字要对玩家说得清')
+  assert.ok(client.includes('/retry-writeback'), '要调这个 handle')
+  assert.ok(client.includes('补写中'), '要有个「正在补」的状态，别让人以为点没反应')
+})
+
 test('分叉：订阅 onTimelineChanged，只认 fork，把父局搬给新局', () => {
   assert.ok(source.includes('onTimelineChanged'), '要订阅时间线变化（名字是 onTimelineChanged）')
   // 从**注册那一行**开始切：源码里 `onTimelineChanged` 还有别处（helper 的注释）

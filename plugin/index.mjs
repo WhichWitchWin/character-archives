@@ -50,6 +50,7 @@ import { applyRetractions } from './lib/retract.js'
 import { claimsOfPerson, filterDeletedPersonActions, pointersOfPerson, splitPersons, idSet } from './lib/deleted.js'
 import { pruneFutureFlags } from './lib/rollback.js'
 import { inheritGameState } from './lib/forkInherit.js'
+import { retryRefusal, retrySummary } from './lib/retryWriteback.js'
 import { PLAYER_ID, ensurePlayer, isPlayer, isPronounName } from './lib/player.js'
 import { fuzzyLeaveIds, markSeen } from './lib/fuzzy.js'
 import { buildRecallSection } from './lib/recallEngine.js'
@@ -280,6 +281,26 @@ const store = createFileStore({ root: STORE_ROOT })
  * 队列任务只包「落盘」那几毫秒，不等模型——长任务在队列外跑完再进来。
  */
 const stateWriteQueue = createQueue()
+
+// 「这一（局＋轮）的写回正在跑」标记（ADR 0111）。
+// 为什么需要：宿主的 `getTurnState().busy` 只反映**前台生成/后台结算**，它不知道插件自己的后台任务
+// ——`onTurnSettled` 的处理器宿主不等。没有这个标记，玩家在自动写回还没跑完时点「补写这一轮」，
+// 同一轮会并发跑两遍：同轮快照互相覆盖（同名文件后写覆盖先写）、整局数据整份覆盖写。
+const writebackInFlight = new Set()
+const writebackKey = (gameId, turn) => `${String(gameId ?? '')}\u0000${Number.isInteger(turn) ? turn : 0}`
+
+/** 通知面板「档案变了」（自动结算与手动补写共用；失败不影响游戏）。 */
+async function publishArchiveChanged(ctx, gameId, data) {
+  try {
+    await ctx.tavern.publishState({
+      gameId,
+      name: 'archive',
+      data: { ...(data ?? {}), at: new Date().toISOString() },
+    })
+  } catch {
+    // 推送失败不影响游戏：面板还有「刷新」按钮和打开时的重读兜底
+  }
+}
 
 /** 存整局数据：内容进文件，酒馆里只留指针。串行队列保证并发结算不互相覆盖。 */
 async function saveGameState(ctx, gameId, state) {
@@ -1826,6 +1847,11 @@ export function apply(ctx) {
 
     // 「关闭」档不跑模型，只保留程序记账（ADR 0028）
     if (settings.writeback?.mode !== 'off') {
+      // 打一个「这一轮正在写回」的标记（ADR 0111）：宿主不知道插件自己的后台任务在跑
+      // （onTurnSettled 的处理器它不等），没有这个标记的话，玩家这时候点「补写」会并发跑两遍，
+      // 同轮快照互相覆盖、整局数据后写覆盖先写。
+      const flight = writebackKey(gameId, turn)
+      writebackInFlight.add(flight)
       try {
         await runWriteback(ctx, state, { gameId, turn, text: String(text ?? ''), textVersion, settings, mvu })
         pushDebug(state, 'info', '写回完成', state.debugWriteback)
@@ -1833,6 +1859,8 @@ export function apply(ctx) {
         // 写回失败只跳过本轮，绝不影响游戏
         ctx.tavern.log?.warn?.('人物档案馆：写回失败，本轮跳过', error)
         pushDebug(state, 'error', '写回失败（本轮跳过）', { error: String(error?.message ?? error), stack: String(error?.stack ?? '').split('\n').slice(0, 4) })
+      } finally {
+        writebackInFlight.delete(flight)
       }
     }
 
@@ -1840,14 +1868,103 @@ export function apply(ctx) {
 
     // 推一个「档案变了」的信号（M4-16）：面板收到就自动重读，不用轮询。
     // data 里带轮次，保证每次结算内容都不同——平台只在内容变化时才通知订阅方。
+    await publishArchiveChanged(ctx, gameId, { turn, gt: diag?.gt ?? null, loc: diag?.loc ?? null })
+  })
+
+  // ── 手动补写（ADR 0111）──
+  // 自动写回是「射后不管」的后台任务：模型偶尔交空、或者写回中途失败，那一轮的内容就永久缺了。
+  // 这个按钮让它**再跑一次**，免得玩家只能回退重跑（会连带重算 MVU）。
+  // 复用自动结算那套 `runWriteback`（D6）：写入逻辑只有一份，不平行复制。
+  //
+  // 三条边界（用户定的）：只补**最新一轮**、不弹二次确认、后台在忙时拒绝。
+  // 只补最新一轮的理由：旧轮正文写进「现在」的状态会凭空冒出以后才发生的事（ADR 0110 同一个坑）。
+  const retryLocks = new Set()
+  ctx.tavern.handle('character-archives/retry-writeback', async ({ gameId } = {}) => {
+    const key = String(gameId ?? '')
+    if (!key) throw new Error('没指定哪一局')
+    // 同一局同时只补一次：双击、或者两个面板同时点，都不该并发跑两遍模型
+    if (retryLocks.has(key)) return { ok: false, reason: '上一次补写还在跑，稍等一下' }
+    retryLocks.add(key)
     try {
-      await ctx.tavern.publishState({
-        gameId,
-        name: 'archive',
-        data: { turn, at: new Date().toISOString(), gt: diag?.gt ?? null, loc: diag?.loc ?? null },
+      const turnState = typeof ctx.tavern.getTurnState === 'function'
+        ? await ctx.tavern.getTurnState({ gameId: key })
+        : null
+      const turn = Number.isInteger(turnState?.turn) ? turnState.turn : null
+      const state = await loadGameState(ctx.tavern, key)
+      const settings = resolveSettings(await readScopedSettings(ctx, state))
+      const verdict = retryRefusal({
+        turnState,
+        mode: settings.writeback?.mode,
+        // 宿主不知道插件自己的后台写回在跑，这一条只能由我们自己判（ADR 0111 的 C1）
+        inFlight: turn != null && writebackInFlight.has(writebackKey(key, turn)),
       })
-    } catch {
-      // 推送失败不影响游戏：面板还有「刷新」按钮和打开时的重读兜底
+      if (!verdict.ok) return { ok: false, reason: verdict.reason }
+
+      // 正文、textVersion、MVU 变量都从宿主现取：这一轮可能被编辑/回退过，状态里那份可能已经过期
+      const content = await ctx.tavern.getTurn({ gameId: key, turn })
+      if (!content) return { ok: false, reason: `第 ${turn} 轮还没结算完，读不到正文` }
+      // MVU 只兜底时间与地点（ADR 0053）：不传的话补出来的指针会挂上**上一轮**的游戏时间
+      const mvu = parseMvu(content.variables, {
+        timePath: String(state.mvuTimeLoc?.time ?? ''),
+        locPath: String(state.mvuTimeLoc?.loc ?? ''),
+      })
+      if (mvu.ok) state.flags.present = mvu.present
+
+      // 回执只认**这一次**的计数：`runWriteback` 在「本轮没有可写入的人」时会早退、根本不写
+      // `debugWriteback`；不清空的话我们会把上一轮的数字当成本次结果报给玩家
+      state.debugWriteback = null
+      const flight = writebackKey(key, turn)
+      writebackInFlight.add(flight)
+      try {
+        await runWriteback(ctx, state, {
+          gameId: key,
+          turn,
+          text: String(content.text ?? ''),
+          textVersion: content.textVersion,
+          settings,
+          mvu,
+        })
+      } catch (error) {
+        // 模型那边失败不能把面板打崩：落一条日志（带上这次为什么失败），再用一句人话回面板
+        ctx.tavern.log?.warn?.('人物档案馆：手动补写失败', error)
+        pushDebug(state, 'error', `手动补写失败（第 ${turn} 轮）`, {
+          error: String(error?.message ?? error),
+          stack: String(error?.stack ?? '').split('\n').slice(0, 4),
+        })
+        await saveGameState(ctx, key, state).catch(() => {})
+        return { ok: false, reason: `补写失败：${String(error?.message ?? error)}` }
+      } finally {
+        writebackInFlight.delete(flight)
+      }
+
+      // 补写要等模型（秒级）：这期间玩家可能已经推进到下一轮并落盘。那样就**不能**拿手里这份旧 state
+      // 整份覆盖回去（会把 flags／编号／轮次写回过去，还可能让新建的人拿到已用过的编号，违反 ADR 0004）。
+      // 此时只把编号抬到安全值，其余丢弃——快照已经写了，但要保证以后不会撞号。
+      const after = typeof ctx.tavern.getTurnState === 'function'
+        ? await ctx.tavern.getTurnState({ gameId: key })
+        : null
+      const nowTurn = Number.isInteger(after?.turn) ? after.turn : turn
+      if (nowTurn !== turn) {
+        const fresh = await loadGameState(ctx.tavern, key)
+        fresh.nextId = Math.max(Number(fresh.nextId) || 1, Number(state.nextId) || 1)
+        pushDebug(fresh, 'warn', `手动补写作废：这期间剧情推进到第 ${nowTurn} 轮`, { 补写轮次: turn })
+        await saveGameState(ctx, key, fresh).catch(() => {})
+        await publishArchiveChanged(ctx, key, { turn: nowTurn, manual: 'discarded' })
+        return { ok: false, reason: `补写期间剧情推进到第 ${nowTurn} 轮，这次结果没保存（可以再点一次）` }
+      }
+
+      const counts = state.debugWriteback ?? {}
+      pushDebug(state, 'info', `手动补写：第 ${turn} 轮`, { ...counts })
+      await saveGameState(ctx, key, state)
+      // 补写成功也推一次「档案变了」：不然侧栏／另一个窗口里打开的面板一直是旧档案
+      await publishArchiveChanged(ctx, key, { turn, manual: true })
+      return { ok: true, turn, summary: retrySummary(counts), counts }
+    } catch (error) {
+      // 外层兜底：getTurn／getTurnState／loadGameState 抛错时也要在日志里留痕，别只 reject 到面板
+      ctx.tavern.log?.warn?.('人物档案馆：手动补写出错', error)
+      return { ok: false, reason: `补写出错：${String(error?.message ?? error)}` }
+    } finally {
+      retryLocks.delete(key)
     }
   })
 

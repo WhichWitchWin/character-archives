@@ -289,12 +289,35 @@ window.__ModuleLoader__.load({
         }
       }
 
+      // 手动补写（ADR 0111）：自动写入没写进去时，拿最新一轮正文再跑一次写入。
+      // 不弹二次确认（用户定的）：相同的说法程序会复用、不会写重，所以它不算危险操作。
+      const doRetry = async () => {
+        setBusy('补写中…')
+        setHint('')
+        try {
+          const result = await tavernUi.callHost(`${PLUGIN}/retry-writeback`, { gameId })
+          if (!result?.ok) {
+            setHint(`没补成：${result?.reason ?? '未知原因'}`)
+            // 失败也可能已经写了一条 error 调试记录（比如模型抛错），顺手刷一下才看得见
+            onReload?.()
+            return
+          }
+          setHint(String(result.summary ?? '补写完成'))
+          onReload?.()
+        } catch (error) {
+          setHint(`补写失败：${String(error?.message || error)}`)
+        } finally {
+          setBusy('')
+        }
+      }
+
       return h(
         'div',
         { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
         h(
           'div',
-          { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+          // flexWrap：工具栏现在有 7 个控件，窄面板下要能折行，不然会溢出
+          { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
           h(
             'button',
             { onClick: doExport, disabled: Boolean(busy), style: { ...iconBtn, opacity: 0.9, fontSize: font.sm } },
@@ -304,6 +327,16 @@ window.__ModuleLoader__.load({
             'button',
             { onClick: () => onReload?.(), disabled: Boolean(busy), style: { ...iconBtn, opacity: 0.9, fontSize: font.sm }, title: '重新读一遍档案' },
             '刷新',
+          ),
+          h(
+            'button',
+            {
+              onClick: doRetry,
+              disabled: Boolean(busy),
+              style: { ...iconBtn, opacity: 0.9, fontSize: font.sm },
+              title: '自动写入没写进去时点这里：拿最新一轮正文再跑一次写入（相同的说法会被复用，不会写重）',
+            },
+            '补写这一轮',
           ),
           h(
             'button',
