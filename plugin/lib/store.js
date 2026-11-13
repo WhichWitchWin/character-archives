@@ -104,6 +104,11 @@ export function createFileStore({ root } = {}) {
     return true
   }
 
+  /** 这一局有没有自己的数据文件（分叉继承用来判「已经搬过了」，也用来做幂等）。 */
+  function hasGame(sessionId) {
+    return existsSync(gamePath(sessionId))
+  }
+
   // ── 快照 ──
 
   /**
@@ -193,6 +198,64 @@ export function createFileStore({ root } = {}) {
     return { removed }
   }
 
+  /**
+   * 分叉：把父局「分叉点及之前」的快照搬给子局，并写子局的 index.json（ADR 0110）。
+   *
+   * 三条讲究：
+   * 1. **以父局索引为准**——父局同一轮可能有残留的两份文件（换版本时 `moveToTrash` 失败会静默
+   *    返回 null），索引只认其中一份；照文件搬会把同一轮搬成两条，面板列出重复轮次。
+   * 2. **子局已有的索引按轮合并**，不是整片覆盖——否则子局自己的文件变成索引外的孤儿。
+   * 3. **只搬 ≤ 分叉轮**：分叉点是「过去」，之后的快照属于还没发生的未来。
+   *
+   * @returns {number} 搬了几份
+   */
+  function copySnapshotsUpTo(fromSessionId, toSessionId, upToTurn) {
+    const from = String(fromSessionId ?? '')
+    const to = String(toSessionId ?? '')
+    const cut = Number.isInteger(upToTurn) && upToTurn >= 1 ? upToTurn : 0
+    if (!from || !to || from === to || !cut) return 0
+
+    const wanted = new Map()
+    const parentIndex = readIndex(from)
+    if (parentIndex?.length) {
+      for (const item of parentIndex) {
+        const turn = Number(item?.turn)
+        if (!Number.isInteger(turn) || turn > cut || !item?.file) continue
+        wanted.set(turn, { turn, file: String(item.file), hash: String(item.hash ?? '') })
+      }
+    }
+    if (!wanted.size) {
+      // 索引缺失或坏掉：退回按文件名找。同一轮取最后一份——没有更好的线索，至少不搬成两条。
+      for (const item of listSnapshots(from)) {
+        if (item.turn > cut) continue
+        wanted.set(item.turn, item)
+      }
+    }
+
+    const existing = new Map()
+    for (const item of readIndex(to) ?? []) {
+      const turn = Number(item?.turn)
+      if (!Number.isInteger(turn) || !item?.file) continue
+      existing.set(turn, { turn, file: String(item.file), hash: String(item.hash ?? '') })
+    }
+
+    let copied = 0
+    for (const item of [...wanted.values()].sort((a, b) => a.turn - b.turn)) {
+      const data = readJsonSafe(snapshotPath(from, item.file))
+      if (data == null) continue        // 文件丢了／坏了：跳过，别把 null 写成一份"空快照"
+      const old = existing.get(item.turn)
+      // 同一轮换了文件：把子局那份旧文件挪 trash（不硬删），别留成同名轮的两份
+      if (old && old.file !== item.file) moveToTrash(root, snapshotPath(to, old.file))
+      writeJsonAtomic(snapshotPath(to, item.file), data)
+      existing.set(item.turn, { turn: item.turn, file: item.file, hash: item.hash })
+      copied += 1
+    }
+
+    const merged = [...existing.values()].sort((a, b) => a.turn - b.turn)
+    if (merged.length) writeIndex(to, merged)
+    return copied
+  }
+
   /** 删局：整目录挪进 trash。 */
   function dropGame(sessionId) {
     const moved = moveToTrash(root, snapshotDir(sessionId))
@@ -262,6 +325,23 @@ export function createFileStore({ root } = {}) {
   }
 
   /**
+   * 分叉：已删名单跟着走（ADR 0110）。
+   *
+   * 不带过去的话，父局里删过的人到了新分支会被模型重新建档——玩家删了个寂寞。
+   *
+   * @returns {number} 搬了几个人（0＝父局没删过人，不落空文件）
+   */
+  function copyDeleted(fromSessionId, toSessionId) {
+    const from = String(fromSessionId ?? '')
+    const to = String(toSessionId ?? '')
+    if (!from || !to || from === to) return 0
+    const people = readDeleted(from)
+    if (!people.length) return 0
+    writeDeleted(to, people)
+    return people.length
+  }
+
+  /**
    * 清空 trash（P22③：trash 只涨不清，从来没回收）。
    *
    * trash 里的东西都是「确认不要了」的死数据（剪枝、回退、删局、删人挪进去的），
@@ -317,9 +397,11 @@ export function createFileStore({ root } = {}) {
     root,
     readGame,
     writeGame,
+    hasGame,
     readSnapshot,
     writeSnapshot,
     listSnapshots,
+    copySnapshotsUpTo,
     pruneSnapshots,
     pruneAfter,
     emptyTrash,
@@ -328,6 +410,7 @@ export function createFileStore({ root } = {}) {
     writeGlobalWords,
     readDeleted,
     writeDeleted,
+    copyDeleted,
     dropDeleted,
   }
 }

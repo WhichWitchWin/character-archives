@@ -207,3 +207,71 @@ test('跨局专名词库：写进去能读回来，文件落在数据根下', ()
     assert.ok(readdirSync(root).includes('global-words.json'), '应该落在数据根下')
   })
 })
+
+// ── 分叉：把父局搬一份给子局（ADR 0110）──
+// 酒馆的分叉是新 gameId，而我们的文件按 gameId 存；官方文档也写「自己写的文件不会随
+// 存档、分叉带走」。所以分叉时要主动搬：整局数据 + 分叉点之前的快照 + 已删名单。
+test('分叉：hasGame 判「这局有没有自己的数据」，是继承的幂等闸门', () => {
+  withStore((store) => {
+    assert.equal(store.hasGame('child'), false, '子局还没数据')
+    store.writeGame('child', { v: 1 })
+    assert.equal(store.hasGame('child'), true)
+  })
+})
+
+test('分叉：快照只搬分叉点及之前那几轮，未来轮次不能带过去', () => {
+  withStore((store) => {
+    for (const turn of [1, 2, 3, 5]) {
+      store.writeSnapshot('parent', { turn, key: `k${turn}`, data: { v: 1, t: turn, p: [] } })
+    }
+    assert.equal(store.copySnapshotsUpTo('parent', 'child', 3), 3)
+    assert.deepEqual(store.listSnapshots('child').map((item) => item.turn), [1, 2, 3])
+    assert.deepEqual(store.readSnapshot('child', 3).data, { v: 1, t: 3, p: [] })
+    assert.equal(store.readSnapshot('child', 5), null, '第 5 轮是分叉点之后的未来')
+    // 宿主的事件可能重投：再跑一次不能把文件搞成两份
+    assert.equal(store.copySnapshotsUpTo('parent', 'child', 3), 3)
+    assert.deepEqual(store.listSnapshots('child').map((item) => item.turn), [1, 2, 3])
+  })
+})
+
+test('分叉：已删名单要跟着走（不然分叉后已删的人又被重建）', () => {
+  withStore((store) => {
+    assert.equal(store.copyDeleted('parent', 'child'), 0, '父局没删过人就没什么可搬')
+    store.writeDeleted('parent', [{ id: 'p2', name: '老陈' }])
+    assert.equal(store.copyDeleted('parent', 'child'), 1)
+    assert.deepEqual(store.readDeleted('child'), [{ id: 'p2', name: '老陈' }])
+  })
+})
+
+// 父局同轮出现两份文件是**会发生的**：`writeSnapshot` 换版本时靠 moveToTrash 挪旧文件，
+// 而 moveToTrash 失败会静默返回 null（Windows 上文件被占就可能失败）。
+// 这种情况下索引才是真相：只搬索引认的那份，别把同轮两份一起搬进子局。
+test('分叉：父局同轮有残留时只搬索引认的那份，子局不出现两条同轮', () => {
+  withStore((store, root) => {
+    const dir = join(root, 'snapshots', 'parent')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, '3-aaaa1111.json'), JSON.stringify({ v: 1, t: 3, p: ['旧'] }), 'utf8')
+    writeFileSync(join(dir, '3-bbbb2222.json'), JSON.stringify({ v: 1, t: 3, p: ['新'] }), 'utf8')
+    writeFileSync(
+      join(dir, 'index.json'),
+      JSON.stringify({ version: 1, turns: [{ turn: 3, file: '3-bbbb2222.json', hash: 'bbbb2222' }] }),
+      'utf8',
+    )
+    assert.equal(store.copySnapshotsUpTo('parent', 'child', 3), 1)
+    assert.deepEqual(store.listSnapshots('child').map((item) => item.turn), [3], '同轮只出现一次')
+    assert.deepEqual(store.readSnapshot('child', 3).data.p, ['新'], '搬的是索引认的那份')
+    const index = JSON.parse(readFileSync(join(root, 'snapshots', 'child', 'index.json'), 'utf8'))
+    assert.equal(index.turns.length, 1)
+  })
+})
+
+test('分叉：子局目录里已有自己的快照时，索引按轮合并、不整片覆盖', () => {
+  withStore((store, root) => {
+    store.writeSnapshot('parent', { turn: 2, key: 'p2', data: { v: 1, t: 2 } })
+    store.writeSnapshot('child', { turn: 7, key: 'c7', data: { v: 1, t: 7 } })   // 抢先落过一轮
+    assert.equal(store.copySnapshotsUpTo('parent', 'child', 5), 1)
+    const index = JSON.parse(readFileSync(join(root, 'snapshots', 'child', 'index.json'), 'utf8'))
+    assert.deepEqual(index.turns.map((item) => item.turn), [2, 7], '子局自己那轮不能被父局的索引挤掉')
+    assert.deepEqual(store.readSnapshot('child', 7).data, { v: 1, t: 7 }, '子局自己的文件还在')
+  })
+})

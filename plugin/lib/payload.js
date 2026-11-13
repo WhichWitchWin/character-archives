@@ -21,6 +21,107 @@ function textOf(value) {
   return typeof value === 'string' ? value.trim() : ''
 }
 
+// ── 交卷形状兜底（ADR 0109）──
+//
+// 模型有时把整份交卷 JSON 当字符串塞进一个自己编的键里（`{parameter:"{…}"}`、`{parent:"{}",https:"{…}"}`）。
+// 解析器只认顶层键，于是判定与写入两段都读成「0 条动作」；交卷工具还回 ok，
+// 模型以为交成功了，下一轮继续这么交——2026-11-12 就是这么静默空了 24 轮。
+//
+// 所以：解析前先剥壳（本段），交卷工具再用 acceptShape 判断形状认不认得，不认得就退回让模型自纠。
+
+const JSON_FENCE = /^```[a-zA-Z]*\s*|```\s*$/g
+
+/** 判定块与写入块共用的顶层键。剥壳只在「一个都不认得」时才动手。 */
+export const PAYLOAD_KEYS = Object.freeze([
+  '回头测试', '建档', '改状态', '改名', '模糊建档',
+  '通过', '不通过', '命题', '撤回', '地点',
+])
+
+/** 字符串里藏着对象就解析出来，否则给 undefined（只认 `{` / `[` 开头，不瞎猜）。 */
+function tryJsonString(value) {
+  if (typeof value !== 'string') return undefined
+  const text = value.trim().replace(JSON_FENCE, '').trim()
+  if (!text) return undefined
+  const head = text[0]
+  if (head !== '{' && head !== '[') return undefined
+  try {
+    const parsed = JSON.parse(text)
+    return parsed && typeof parsed === 'object' ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * 剥掉模型自造的壳：`{parameter:"{…}"}` / `{parent:"{}",https:"{…}"}` / `["{…}"]`。
+ *
+ * 顶层已经认得任何已知键就原样返回（**绝不误伤正常交卷**）；
+ * 否则逐个字符串值试解析，最多剥 4 层（正常最多两层：壳套壳）。
+ *
+ * @param {any} payload
+ * @param {readonly string[]} [keys] 视为「认得」的顶层键
+ * @param {number} [depth] 递归层数（内部用）
+ * @returns {any} 剥不动就返回原值
+ */
+export function unwrapPayload(payload, keys = PAYLOAD_KEYS, depth = 0) {
+  // 上限 4 层（实测最多两层：壳套壳）。写 >= 而不是 >：`depth` 是「已经剥了几层」，
+  // `> 4` 会实际剥到 5 层，跟文档对不上。
+  if (depth >= 4) return payload
+  if (Array.isArray(payload)) {
+    if (payload.length === 1) {
+      const inner = tryJsonString(payload[0])
+      if (inner) return unwrapPayload(inner, keys, depth + 1)
+    }
+    return payload
+  }
+  if (!isPlainObject(payload)) return payload
+  if (keys.some((key) => payload[key] !== undefined)) return payload
+  const candidates = Object.values(payload).map(tryJsonString).filter(Boolean)
+  if (!candidates.length) return payload
+  // 双键包装（parent + https）里只有一个装着真内容：优先挑认得出的那个
+  const next = candidates.find((one) => keys.some((key) => one[key] !== undefined))
+    ?? candidates[candidates.length - 1]
+  return unwrapPayload(next, keys, depth + 1)
+}
+
+/**
+ * 这次交卷的形状认不认得：解包后能认出已知键，或者是「主动交空」。
+ *
+ * 只用来给模型回执——认不得就回 `ok:false` 让它重交，别把脏载荷合并进盒子里
+ * （合并进去了，/debug 里只剩「0 条动作」，看不出是形状问题）。
+ */
+export function acceptShape(args) {
+  if (args == null) return false
+  const unwrapped = unwrapPayload(args)
+  if (unwrapped !== args) return true
+  if (isPlainObject(args)) {
+    if (!Object.keys(args).length) return true   // 「没有要做的就交 {}」是合法行为
+    return PAYLOAD_KEYS.some((key) => args[key] !== undefined)
+  }
+  // 顶层数组：老形状的扁平动作列表（parseJudgePayload 仍认它）
+  if (Array.isArray(args)) return args.every(isPlainObject)
+  return false
+}
+
+/** 退回给模型的话：说清怎么改，别只说「不对」（模型下一轮才知道该怎么重交）。 */
+export const SUBMIT_SHAPE_ERROR = '交卷形状不对：请把动作对象**直接**作为参数提交（顶层就是 回头测试/建档/改状态/改名/模糊建档/命题/撤回/地点），不要把 JSON 包成字符串、也不要塞进别的键里。示例见系统提示词「六、输出」。'
+
+/**
+ * 交卷工具入口的统一守卫（子代理档与后台成员档共用同一份契约，ADR 0092/0109）。
+ *
+ * 认不得的形状**不入盒**：合进去只会让 /debug 里只剩「0 条动作」，
+ * 而模型那边收到 ok，下一轮继续照样交——2026-11-12 的空转就是这么来的。
+ *
+ * @param {any} args 工具收到的参数
+ * @returns {{ok:true, value:object} | {ok:false, error:string}}
+ */
+export function normalizeSubmission(args) {
+  // 交卷盒只收对象：顶层数组（哪怕解析层认得）放进去等于静默丢内容，一并退回
+  if (!isPlainObject(args)) return { ok: false, error: SUBMIT_SHAPE_ERROR }
+  if (!acceptShape(args)) return { ok: false, error: SUBMIT_SHAPE_ERROR }
+  return { ok: true, value: args }
+}
+
 /**
  * 判定阶段的 payload → 动作列表。
  *

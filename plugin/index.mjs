@@ -41,7 +41,7 @@ import {
 import { createIdCounter, takePersonId } from './lib/person.js'
 import { dropLeft, setLeft } from './lib/gametime.js'
 import { PROMPT_TEMPLATE, RECALL_TEMPLATE, WRITE_TEMPLATE } from './prompt.js'
-import { parseJudgePayload, parseWritePayload, parseWritePayloadBundle } from './lib/payload.js'
+import { normalizeSubmission, parseJudgePayload, parseWritePayloadBundle, unwrapPayload } from './lib/payload.js'
 import { knownPlaces, resolvePlace } from './lib/place.js'
 import { checkText, NAME_MAX } from './lib/inputLimit.js'
 import { beginMemberRun, endMemberRun, submitMemberPayload } from './lib/memberBox.js'
@@ -49,6 +49,7 @@ import { createQueryCounter } from './lib/queryBudget.js'
 import { applyRetractions } from './lib/retract.js'
 import { claimsOfPerson, filterDeletedPersonActions, pointersOfPerson, splitPersons, idSet } from './lib/deleted.js'
 import { pruneFutureFlags } from './lib/rollback.js'
+import { inheritGameState } from './lib/forkInherit.js'
 import { PLAYER_ID, ensurePlayer, isPlayer, isPronounName } from './lib/player.js'
 import { fuzzyLeaveIds, markSeen } from './lib/fuzzy.js'
 import { buildRecallSection } from './lib/recallEngine.js'
@@ -441,6 +442,27 @@ export async function loadGameState(tavern, gameId) {
 }
 
 /**
+ * 这一局现在是第几轮（分叉继承用来定分叉点，ADR 0110）。
+ *
+ * 为什么需要：宿主发 `onTimelineChanged` 时只在 `turn > 0` 才带 `turn` 字段
+ * （`plugin-api.js` 的 `known` 判断），在开场白／第 0 轮分叉时这个字段是缺的。
+ * 这时不能退回「父局最新轮」——那会把父局到最新轮为止的快照与 flags 全搬进新分支。
+ * 分叉时宿主已经把正文前缀复制到新局，问子局自己的当前轮最准。
+ *
+ * @returns {Promise<number|null>} 拿不到返回 null
+ */
+async function childTurnOf(ctx, gameId) {
+  try {
+    if (typeof ctx.tavern.getTurnState !== 'function') return null
+    const state = await ctx.tavern.getTurnState({ gameId })
+    const turn = Number(state?.turn)
+    return Number.isSafeInteger(turn) && turn >= 0 ? turn : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * 读某一轮（或它之前最近一份）的快照。
  *
  * ⚠️ `readTurnData` 返回的是 **`{ turn, textVersion, data }`**，快照在 `.data` 里——
@@ -612,11 +634,49 @@ let agentInfo = null          // 最近一次建/复用子代理时的模型信�
 
 /** 这一轮把动作放在哪儿——工具 execute 往里写，runPhase 读出来。 */
 function freshBox() {
-  return { payload: null, payloadMerged: false, submissions: [], viewpoint: '第二人称', playerName: '', systemTemplate: '', entriesText: '' }
+  return { payload: null, payloadMerged: false, submissions: [], rejected: [], viewpoint: '第二人称', playerName: '', systemTemplate: '', entriesText: '' }
 }
 
 /** 交卷工具说明共用一份：子代理档与后台成员档注册的是同一个契约（ADR 0092/0102）。 */
 const SUBMIT_TOOL_DESCRIPTION = '提交本轮的动作。一次交一个对象：判人五块 {回头测试,建档,改状态,改名,模糊建档} + 命题数组 {命题:[{关于,栏目,值,认知}]} + 可选撤回块 撤回:[{谁,序号}]；本局有约定栏目时认知还要带约定字段，规则见系统提示词的「约定状态」段。没有要做的就交 {}。'
+
+/** 调试日志里的「载荷形状」一句话（判定与写入两处共用）。 */
+function shapeOf(value) {
+  return Array.isArray(value) ? 'array' : (value && typeof value === 'object' ? 'object' : typeof value)
+}
+
+/**
+ * 交卷工具的入参 schema（子代理档与后台成员档共用，ADR 0092/0109）。
+ *
+ * 原来只有 `{type:'object', additionalProperties:true}`——模型手里一个字段名都没有，
+ * 就把整份 JSON 当字符串塞进自己编的键（`{parameter:"{…}"}`、`{parent:"{}",https:"{…}"}`），
+ * 解析器只认顶层键，于是判定与写入两段都读成 0 条动作（2026-11-12 静默空了 24 轮）。
+ * 把字段名列出来是「从源头少包装」；下面那层解包是兜底，两层都要。
+ *
+ * `additionalProperties` 保留：模型多带字段时不至于整次调用失败。
+ * **别加 required**：「没有要做的就交 {}」是合法行为（系统提示词「六、输出」最后一条），
+ * 加了必填会让空轮直接调用失败。
+ */
+const SUBMIT_PARAMETERS = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    回头测试: {
+      type: 'object',
+      properties: {
+        通过: { type: 'array', items: { type: 'string' } },
+        不通过: { type: 'array', items: { type: 'object' } },
+      },
+    },
+    建档: { type: 'array', items: { type: 'object' } },
+    改状态: { type: 'array', items: { type: 'object' } },
+    改名: { type: 'array', items: { type: 'object' } },
+    模糊建档: { type: 'array', items: { type: 'string' } },
+    命题: { type: 'array', items: { type: 'object' } },
+    撤回: { type: 'array', items: { type: 'object' } },
+    地点: { type: 'string' },
+  },
+}
 
 /**
  * 「这一轮查了几次」的账本（纯逻辑在 lib/queryBudget.js，见那里的说明）。
@@ -652,11 +712,8 @@ async function ensureResident(ctx, gameId) {
       name: 'char_archives_submit',
       description: SUBMIT_TOOL_DESCRIPTION,
       // 一次交一个对象：判人五块 + 命题数组（ADR 0092）。
-      // schema 只约束到 object（工具入参不收顶层数组），具体形状由系统提示词的动作示例说清。
-      parameters: {
-        type: 'object',
-        additionalProperties: true,
-      },
+      // 字段名要在 schema 里露出来，模型才知道往哪儿放（ADR 0109：schema 空着 = 模型自己编键包字符串）。
+      parameters: SUBMIT_PARAMETERS,
       output: {
         schema: { type: 'string' },
         render: (_args, value) => [{ type: 'text', text: String(value ?? '') }],
@@ -665,7 +722,14 @@ async function ensureResident(ctx, gameId) {
         // 同一轮可能被调多次（模型分两次交）：**合并**，不许后交覆盖先交，
         // 否则先交的那半块会静默丢掉，/debug 里只剩「0 条动作」。
         // 每次提交原样留档（submissions），合并后出问题能看出分几次各交了什么。
-        const incoming = args && typeof args === 'object' ? args : {}
+        // 形状认不得（JSON 被包成字符串等）直接退回、不入盒，让模型自己改（ADR 0109）。
+        const guard = normalizeSubmission(args)
+        if (!guard.ok) {
+          // 退回也留一条痕：不然 /debug 只看到「交卷次数 0」，会把「被退回」读成「没交」
+          box.rejected = [...(box.rejected ?? []), { 载荷: String(JSON.stringify(args ?? null)).slice(0, 600) }]
+          return JSON.stringify({ ok: false, error: guard.error })
+        }
+        const incoming = guard.value
         box.submissions = [...(box.submissions ?? []), incoming]
         if (box.payload != null) box.payloadMerged = true
         box.payload = { ...(box.payload ?? {}), ...incoming }
@@ -724,7 +788,7 @@ const memberBoxes = new Map()
 /** 每局一个交卷盒（member 是常驻的，按 gameId 分开存）。 */
 function memberBox(gameId) {
   const key = String(gameId ?? '')
-  if (!memberBoxes.has(key)) memberBoxes.set(key, { payload: null, merged: false })
+  if (!memberBoxes.has(key)) memberBoxes.set(key, { payload: null, merged: false, rejected: [] })
   return memberBoxes.get(key)
 }
 
@@ -733,7 +797,7 @@ function submitToolSpec() {
   return {
     name: 'char_archives_submit',
     description: SUBMIT_TOOL_DESCRIPTION,
-    parameters: { type: 'object', additionalProperties: true },
+    parameters: SUBMIT_PARAMETERS,
     output: {
       schema: { type: 'string' },
       render: (_args, value) => [{ type: 'text', text: String(value ?? '') }],
@@ -762,6 +826,7 @@ async function runPhase(ctx, gameId, promptText, { viewpoint = '第二人称', p
     box.payload = null
     box.merged = false
     box.submissions = []
+    box.rejected = []
     // 派发前把「这一轮往哪只盒子交」定好：工具侧拿不到 gameId（见 lib/memberBox.js 的注释）
     beginMemberRun(box)
     try {
@@ -773,19 +838,20 @@ async function runPhase(ctx, gameId, promptText, { viewpoint = '第二人称', p
     } finally {
       endMemberRun(box)
     }
-    return { payload: box.payload, merged: Boolean(box.merged), submissions: box.submissions }
+    return { payload: box.payload, merged: Boolean(box.merged), submissions: box.submissions, rejected: box.rejected }
   }
 
   const resident = await ensureResident(ctx, gameId)
   if (!resident) {
     // 这里是最容易被忽略的断点：平台没 agents 服务、或建子代理失败，都会静默返回 null
     ctx.tavern.log?.warn?.('人物档案馆：拿不到子代理，这一阶段跳过')
-    return { payload: null, merged: false, submissions: [] }
+    return { payload: null, merged: false, submissions: [], rejected: [] }
   }
 
   resident.box.payload = null
   resident.box.payloadMerged = false
   resident.box.submissions = []
+  resident.box.rejected = []
   resident.box.viewpoint = viewpoint
   resident.box.playerName = playerName
   resident.box.systemTemplate = systemTemplate || ''
@@ -798,7 +864,7 @@ async function runPhase(ctx, gameId, promptText, { viewpoint = '第二人称', p
     source: { kind: 'plugin:character-archives' },
   })
   await resident.agent.whenIdle()
-  return { payload: resident.box.payload, merged: Boolean(resident.box.payloadMerged), submissions: resident.box.submissions }
+  return { payload: resident.box.payload, merged: Boolean(resident.box.payloadMerged), submissions: resident.box.submissions, rejected: resident.box.rejected }
 }
 
 /** 释放在跑的子代理（删局 / 插件卸载时用）。 */
@@ -958,8 +1024,24 @@ async function runWriteback(ctx, state, { gameId, turn, text, textVersion, setti
       各次提交: Array.isArray(phase.submissions) ? phase.submissions.map((one) => String(JSON.stringify(one ?? {})).slice(0, 600)) : null,
     })
   }
-  const combinedPayload = phase.payload
+  // 形状被退回的次数单独记：不留这一条，「交卷次数 0」会被读成「模型压根没交」（ADR 0109）
+  if (Array.isArray(phase.rejected) && phase.rejected.length) {
+    pushDebug(state, 'warn', `交卷形状不认，已退回模型重交 ${phase.rejected.length} 次`, {
+      被退回的载荷: phase.rejected.slice(0, 3).map((one) => String(one?.载荷 ?? one).slice(0, 600)),
+    })
+  }
+  // 模型有时把整份交卷 JSON 包成字符串塞进一个自己编的键里（ADR 0109）。
+  // 解析前先剥壳，判定与写入共用这一份（ADR 0092 合并调用，所以一层壳会同时打死两段）。
+  // 剥壳要留痕：判定阶段原来只记「解析后动作数」，出故障时看不见模型到底交了什么。
+  const rawPayload = phase.payload
+  const combinedPayload = unwrapPayload(rawPayload)
   const judgePayload = combinedPayload
+  if (rawPayload !== combinedPayload) {
+    pushDebug(state, 'warn', '模型交的载荷被包了一层，已自动解包', {
+      外层键: Object.keys(rawPayload ?? {}).slice(0, 6),
+      内层键: Object.keys(combinedPayload ?? {}).slice(0, 8),
+    })
+  }
 
   const deletedBlocked = judgePayload
     ? filterDeletedPersonActions(parseJudgePayload(judgePayload), store.readDeleted(gameId))
@@ -984,6 +1066,9 @@ async function runWriteback(ctx, state, { gameId, turn, text, textVersion, setti
       // >0 次却还空＝程序侧读错了盒子（ADR 0100 就是这种）
       交卷次数: Array.isArray(phase.submissions) ? phase.submissions.length : 0,
       动作数: Array.isArray(judgeActions) ? judgeActions.length : null,
+      // 形状要跟写入阶段一样记下来：只记动作数，看不出「模型套了壳」还是「模型主动交空」
+      载荷形状: shapeOf(rawPayload),
+      载荷: rawPayload == null ? null : String(JSON.stringify(rawPayload)).slice(0, 2000),
       原始: Array.isArray(judgeActions) ? judgeActions.slice(0, 5) : null,
       子代理: agentInfo,
     })
@@ -1125,10 +1210,11 @@ async function runWriteback(ctx, state, { gameId, turn, text, textVersion, setti
   }
 
   // 把模型报的值动作原样记下来：值校验全拒绝时，这是唯一能看到"它到底写了什么"的地方。
-  // **载荷**存的是解析前的原始形状——光看 valueActions 分不清「模型主动交空」和「交了对象被读成空」。
+  // **载荷**存的是解析前的原始形状（`rawPayload`，不是剥过壳的）——光看 valueActions
+  // 分不清「模型主动交空」和「交了对象被读成空」，剥壳后的形状反而会盖住证据（ADR 0109）。
   pushDebug(state, 'info', writePayload ? `写入阶段返回 ${valueActions.length} 条值动作` : '写入阶段没返回动作', {
-    载荷形状: Array.isArray(writePayload) ? 'array' : (writePayload && typeof writePayload === 'object' ? 'object' : typeof writePayload),
-    载荷: writePayload == null ? null : String(JSON.stringify(writePayload)).slice(0, 2000),
+    载荷形状: shapeOf(rawPayload),
+    载荷: rawPayload == null ? null : String(JSON.stringify(rawPayload)).slice(0, 2000),
     原始: Array.isArray(valueActions) ? valueActions.slice(0, 8) : null,
   })
 
@@ -1606,6 +1692,69 @@ export function apply(ctx) {
       }
     },
   })
+
+  // 分叉继承（ADR 0110）：分叉＝**新 gameId**，而插件自己的文件按 gameId 存
+  // （官方 plugin-api-data.md：「自己写的文件不会随存档、分叉带走」），不搬的话新分支档案就是空的。
+  // 宿主调我们的方式也是**射后不管**（`void Promise.all(...).then(dispatch)`），不会等我们跑完，
+  // 所以这里只做「几毫秒的纯文件复制」，并留两道闸门：
+  //   ① 子局已经有自己的数据（继承过／已经结算过）就整段跳过——绝不覆盖玩家进度；
+  //   ② 走同一条 stateWriteQueue，别和同局的写回交错。
+  // 别的 kind（rollback／regenerate／edit…）一律忽略：它们的按轮数据由酒馆自己跟着走。
+  if (typeof ctx.tavern.onTimelineChanged === 'function') {
+    ctx.tavern.onTimelineChanged(async ({ gameId, kind, turn, fromGameId } = {}) => {
+      if (kind !== 'fork') return
+      const childId = String(gameId ?? '')
+      const parentId = String(fromGameId ?? '')
+      if (!childId || !parentId || childId === parentId) return
+      try {
+        const inherited = await stateWriteQueue(async () => {
+          // 闸门在**队列里**复查：进队前先查一次只省时间，队列里的这一查才算数
+          if (store.hasGame(childId)) return { skipped: true }
+          const parent = store.readGame(parentId)
+          if (!parent) return null              // 父局还没结算过：没东西可继承
+          // 分叉点从哪儿来——**绝不能**退回「父局最新轮」：宿主在 turn ≤ 0 时压根不给这个字段
+          // （`plugin-api.js` 的 `known` 判断），退回父局最新轮就会把父局到最新轮为止的快照与
+          // flags 全搬进新分支，等于把「未来」搬过去（比档案全空更难查，且静默）。
+          // 事件里没有就问子局自己：分叉时宿主已把正文前缀复制到新局，`getTurnState` 给的就是分叉点。
+          const eventTurn = Number.isInteger(turn) && turn >= 1 ? turn : null
+          const ownTurn = eventTurn == null ? await childTurnOf(ctx, childId) : null
+          const cut = eventTurn ?? ownTurn ?? 0
+          const cutFrom = eventTurn != null ? '事件' : (ownTurn != null ? '子局当前轮' : '未知')
+          const snapshots = store.copySnapshotsUpTo(parentId, childId, cut)
+          const deleted = store.copyDeleted(parentId, childId)
+          const child = inheritGameState(parent, { forkTurn: cut })
+          pushDebug(child, 'info', `分叉：从父局继承档案（分叉点第 ${cut} 轮 · 来源 ${cutFrom}）`, {
+            父局: parentId,
+            快照: snapshots,
+            已删名单: deleted,
+          })
+          // 先补酒馆侧那条几十字节的指针，再写文件：指针写不进去就在这一步失败，
+          // 子局仍是「没有数据」（闸门还能重试）；反过来先写文件会让闸门从此焊死。
+          await ctx.tavern.saveGameData({
+            gameId: childId,
+            data: { v: DATA_VERSION, store: 'file', at: new Date().toISOString() },
+          })
+          store.writeGame(childId, child)
+          // 写完复查一遍：读不回来就把这半份数据挪进 trash，恢复「可重试」
+          if (!store.readGame(childId)) {
+            store.dropGame(childId)
+            return { failed: '写盘后读不回来' }
+          }
+          return { snapshots, deleted, cut, cutFrom }
+        })
+        if (inherited?.skipped) {
+          ctx.tavern.log?.info?.('人物档案馆：新分支已有自己的档案，分叉继承跳过')
+        } else if (inherited?.failed) {
+          ctx.tavern.log?.warn?.(`人物档案馆：分叉继承没成功（${inherited.failed}），新分支会从空档案开始`)
+        } else if (inherited) {
+          ctx.tavern.log?.info?.(`人物档案馆：分叉继承完成（分叉点第 ${inherited.cut} 轮 · 来源 ${inherited.cutFrom} · 快照 ${inherited.snapshots} 份 · 已删名单 ${inherited.deleted} 人）`)
+        }
+      } catch (error) {
+        // 继承失败只影响新分支的初值，绝不能把分叉本身搞崩
+        ctx.tavern.log?.warn?.('人物档案馆：分叉继承失败（新分支会从空档案开始）', error)
+      }
+    })
+  }
 
   // 每轮结算完成后：判定 → 建档改状态 → 写入 → 落盘（§10.1、ADR 0029）
   ctx.tavern.onTurnSettled(async (event) => {

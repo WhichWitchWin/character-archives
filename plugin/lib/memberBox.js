@@ -11,6 +11,8 @@
 //
 // 纯逻辑：不 import 酒馆接口、不接触 ctx。
 
+import { normalizeSubmission } from './payload.js'
+
 /** 当前正在跑的那一轮的交卷盒（宿主规定同一成员的任务串行，所以同时只有一个）。 */
 let active = null
 
@@ -38,7 +40,17 @@ export function submitMemberPayload(args) {
     // 明确报错，别静默丢：模型还能重试，日志里也留得下痕迹
     return { ok: false, error: '没有正在运行的档案任务，这次提交被丢弃' }
   }
-  const incoming = args && typeof args === 'object' && !Array.isArray(args) ? args : {}
+  // 形状认不得就退回、不入盒（ADR 0109）：合进盒子只会让 /debug 里只剩「0 条动作」，
+  // 而模型收到 ok 会以为交成功了，下一轮继续照样交。
+  // 剥壳**不在这儿做**——原始形状要留到解析层，/debug 才看得出模型套了壳。
+  const guard = normalizeSubmission(args)
+  if (!guard.ok) {
+    // 退回也要留痕（单独一栏，不算 submissions）：不留的话 /debug 的「交卷次数」还是 0，
+    // 会被读成「模型压根没交」，等于把「看不见」从解析层搬到工具层。
+    active.rejected = [...(active.rejected ?? []), { 载荷: String(JSON.stringify(args ?? null)).slice(0, 600) }]
+    return { ok: false, error: guard.error }
+  }
+  const incoming = guard.value
   active.submissions = [...(active.submissions ?? []), incoming]
   // 同一轮可能交多次：合并，不许后交覆盖先交（否则前半块静默消失，/debug 里只剩 0 条）
   if (active.payload != null) active.merged = true

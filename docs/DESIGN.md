@@ -3,7 +3,7 @@
 - **状态**：常青（只写当前最新状态）
 - **作用**：开发用的**单一事实来源**——查"现在该怎么实现"，只看这一份
 - **维护**：AI 维护（[ADR 0013](adr/0013-设计稿改由AI维护.md)）；改动须说明改了哪节、为什么
-- **最后同步**：2026-11-06（第十轮：① §7.0② 打分表补「程序自动词与索引词合并判命中」；② §4.1／§7.6／附录 A 索引词上限改 0～3；③ §7.0⑧ 补正文模型查档每轮 2 次；④ §7.6.1 补三段模板「默认」的三处一致；⑤ §8 面板现状补「自动词灰色虚线标签」与「只有标题行可拖」；⑥ §8.6 设置表按 `SETTING_SCHEMA` 重排（离场组只剩模糊离场判定轮数、两个跨插件开关与两个离场开关已隐藏、关键度／预设库／数据管理三组不在设置页）；⑦ §8.8 预设库与「存进卡里」标未实现、单独导入导出排 P10；⑧ §十三 `retract.js` 撤回字段改 `{谁,序号}`、补 `autoWordsOf` 的 `exclude` 与宿主侧 `SUBMIT_TOOL_DESCRIPTION`。第九轮：① §十三 补 `panelView` 的 `autoWords` 字段。第八轮：① §十三 补 `indexWords.js` 的自动抽词与新增 `queryBudget.js`。第七轮：① §7.6.2 撤回块改 `{谁,序号}` 并把「命题说的是谁由程序查」写清，调试日志改「谁 → 关于谁 · 命题内容」；② §7.6.2 约定规则回到固定系统提示词，推翻 0105 的按需发。第六轮：① §7.6.1 补「运行期真实来源＝面板存档 `prompts.system`，四处统一」与撤回／两类命题的新口径；② §7.6.2 动态上下文补【约定规则】按需发；③ §十三 补 `SUBMIT_TOOL_DESCRIPTION`。第五轮：① §7.0⑦ 补主角 `ensurePlayer` 在建素材与写回之前、轮末再同步；② §10.2 补后台档的「交卷盒在派发任务之前定好、工具只收 `args`」；③ §十三 补 `memberBox.js`。第四轮：① §8 面板现状按「界面瘦身 → 字体字号跟宿主 → 档案页改造 → 删除键与图标」全线改写（设置页手风琴、提示词页折叠卡、快照人话、数据位置人话、查询条合并、主题色、`--ca-base` 字号机制、详情折叠与 6 条上限、变化圆点与「本轮 N 处变化」、删除键、全部图标内联 SVG、撤回「⋯」）；② §十三 补两条工程约定（设置一律嵌套读／hook 必须排在标签页分支之前）与 `panelView` 的新字段说明。第三轮：① §7.0④ 补 `cognition.conflictDisplay`；② §7.6.2 动态上下文补「认知口径」；③ §4.1／§5.2 来源组上限改指设置；④ §8.6 坏链改正；⑤ §十三 补认知接线。前两轮：① §四／§五／§六／§七／附录 A 按「命题＋指针」重写；② §三／§八／§九／§十／§十三 补齐未实现标注与漏登模块。§七 7.1～7.11 与 §8.1～8.10 各节仍有早期描述，节首导读声明了以谁为准）
+- **最后同步**：2026-11-13（第十二轮：① §一 把「随分叉」从一句意图写成机制——分叉是新 `gameId`，插件自己的文件不跟着走，所以订阅 `onTimelineChanged` 的 `fork` 主动搬（剪到分叉点、不覆盖已有进度）；② §十三 补 `forkInherit.js`，并给 `store.js` 补上分叉搬运的四个函数。第十一轮：① §10.2 补「交卷形状三层兜底」——`SUBMIT_PARAMETERS` 把动作字段名列进 `properties`、解析前 `unwrapPayload` 剥壳、形状不认就退回，并在判定阶段调试日志补原始载荷；② §十三 补 `payload.js` 的 `unwrapPayload`／`acceptShape`／`normalizeSubmission`、`memberBox` 的形状守卫、宿主侧 `SUBMIT_PARAMETERS`。第十轮：① §7.0② 打分表补「程序自动词与索引词合并判命中」；② §4.1／§7.6／附录 A 索引词上限改 0～3；③ §7.0⑧ 补正文模型查档每轮 2 次；④ §7.6.1 补三段模板「默认」的三处一致；⑤ §8 面板现状补「自动词灰色虚线标签」与「只有标题行可拖」；⑥ §8.6 设置表按 `SETTING_SCHEMA` 重排（离场组只剩模糊离场判定轮数、两个跨插件开关与两个离场开关已隐藏、关键度／预设库／数据管理三组不在设置页）；⑦ §8.8 预设库与「存进卡里」标未实现、单独导入导出排 P10；⑧ §十三 `retract.js` 撤回字段改 `{谁,序号}`、补 `autoWordsOf` 的 `exclude` 与宿主侧 `SUBMIT_TOOL_DESCRIPTION`。第九轮：① §十三 补 `panelView` 的 `autoWords` 字段。第八轮：① §十三 补 `indexWords.js` 的自动抽词与新增 `queryBudget.js`。第七轮：① §7.6.2 撤回块改 `{谁,序号}` 并把「命题说的是谁由程序查」写清，调试日志改「谁 → 关于谁 · 命题内容」；② §7.6.2 约定规则回到固定系统提示词，推翻 0105 的按需发。第六轮：① §7.6.1 补「运行期真实来源＝面板存档 `prompts.system`，四处统一」与撤回／两类命题的新口径；② §7.6.2 动态上下文补【约定规则】按需发；③ §十三 补 `SUBMIT_TOOL_DESCRIPTION`。第五轮：① §7.0⑦ 补主角 `ensurePlayer` 在建素材与写回之前、轮末再同步；② §10.2 补后台档的「交卷盒在派发任务之前定好、工具只收 `args`」；③ §十三 补 `memberBox.js`。第四轮：① §8 面板现状按「界面瘦身 → 字体字号跟宿主 → 档案页改造 → 删除键与图标」全线改写（设置页手风琴、提示词页折叠卡、快照人话、数据位置人话、查询条合并、主题色、`--ca-base` 字号机制、详情折叠与 6 条上限、变化圆点与「本轮 N 处变化」、删除键、全部图标内联 SVG、撤回「⋯」）；② §十三 补两条工程约定（设置一律嵌套读／hook 必须排在标签页分支之前）与 `panelView` 的新字段说明。第三轮：① §7.0④ 补 `cognition.conflictDisplay`；② §7.6.2 动态上下文补「认知口径」；③ §4.1／§5.2 来源组上限改指设置；④ §8.6 坏链改正；⑤ §十三 补认知接线。前两轮：① §四／§五／§六／§七／附录 A 按「命题＋指针」重写；② §三／§八／§九／§十／§十三 补齐未实现标注与漏登模块。§七 7.1～7.11 与 §8.1～8.10 各节仍有早期描述，节首导读声明了以谁为准）
 - **对象项目**：DSH Tavern（`flizzywine/dsh-tavern`）
 
 ## 文档约定
@@ -39,7 +39,7 @@
 把游玩中出现、具有后续价值的非龙套人物收进人物册（**第一次被判定为非龙套就建档**，不管当时在不在场）；只有**离场**人物会被召回注入正文；人物回场照常维护，离场只是状态变化。
 
 - 以**人物为中心**保存内容，不按剧情保存，不做剧情流水账；
-- 人物书属于**当前这一局**，随剧情版本回退、分叉；
+- 人物书属于**当前这一局**，随剧情版本回退、分叉：回退靠「按轮指针」自然剪掉未来；**分叉要靠搬**——分叉是新 `gameId`，而插件自己的文件按 `gameId` 存（官方文档：自己写的文件不随分叉带走），所以订阅 `onTimelineChanged` 的 `fork`，把父局**分叉点之前**的整局数据（`flags` 剪掉未来记录）、快照、已删名单搬给新局，子局已有数据则不覆盖（[ADR 0110](adr/0110-分叉继承档案.md)）；
 - 一个人物始终只有一本人物书，不重复建档；
 - **非龙套就建档（在场也建）**；在场人物**不召回**（[ADR 0024](adr/0024-建档提前.md)），离场只是状态变化；
 - 完整剧情由其他系统负责，本插件不重复记录。
@@ -408,7 +408,7 @@ N 即设置项「**模糊离场判定轮数**」，默认 **3 轮**，范围 **1
 
 ### 3.8 不采用的方案
 
-- **自有普通文件作主存**：不随回退、分叉、导出走，需要重做一整套版本管理；
+- **自有普通文件作主存**：不随回退、分叉、导出走，需要重做一整套版本管理（回退靠「按轮指针」挡住；**分叉已由 [ADR 0110](adr/0110-分叉继承档案.md) 用 `onTimelineChanged` 的 `fork` 主动搬补上**；导出／导入见 ADR 0050）；
 - **整局数据（256 KB）作主存**：回退时人物册不跟着变，会穿帮。
 
 自有存储只用于：插件设置、卡级映射、字典、可重建缓存。
@@ -1747,6 +1747,14 @@ gap  = 当前轮次 − 最后确认轮次
 
 **上一轮还没跑完 → 跳过本轮**：子代理与成员里的任务都是排队的；若上一个仍未结束，**不再往里塞**，记一条提示（[ADR 0028](adr/0028-写入三档.md)）。
 
+**交卷形状三层兜底**（[ADR 0109](adr/0109-交卷形状三层兜底.md)）：模型可能把整份交卷 JSON 当字符串塞进一个自己编的键（`{"parameter":"{…}"}`），解析器只认顶层键，于是两段都读成 0 条——所以三层，缺一层会复发：
+
+1. **schema 列出字段名**：两处交卷工具共用 `SUBMIT_PARAMETERS`，`properties` 里有 `回头测试／建档／改状态／改名／模糊建档／命题／撤回／地点`；`additionalProperties` 保留（多带字段不至于调用失败），**不加 `required`**（「交 `{}`」是合法行为）；
+2. **解析前剥壳**：`index.mjs` 的解析入口写 `const combinedPayload = unwrapPayload(rawPayload)`，顶层已认得任何已知键就原样返回，否则逐个字符串值试解析，最多 4 层（认 ```` ```json ```` 围栏与单元素数组包装）；判定与写入共用这一份；
+3. **形状不认就退回**：`normalizeSubmission(args)` 在交卷工具入口拦——剥不开的形状**不入盒**，回 `{ok:false, error}` 让模型重交，别再回 `ok` 让模型以为成功了；被退回的载荷记进盒子的 `rejected`，判定阶段调试日志报一条「交卷形状不认，已退回 N 次」——不留的话「交卷次数 0」会被按 ADR 0100 的读法误判成「模型没交」。
+
+调试日志两面都留证：判定块补 `载荷形状` / `载荷`，写入块的 `载荷` 记**剥壳前**的原始形状（剥过壳的会盖住证据）。
+
 **切到「关闭」时的弹窗**：
 
 > 关闭后，插件不会自动判定离场，也不会自动建档或更新条目。  
@@ -1901,7 +1909,7 @@ gap  = 当前轮次 − 最后确认轮次
 | `mvu.js` | MVU 解析：取 stat_data、拼 `gt`、取地点 `loc`、取现场名单、取人物字段；MVU 条目信度位固定 `"9"` | mvu.test |
 | `settingsView.js` | 设置界面元数据（分组／标签／类型／范围／选项／大白话说明）＋ `applySettingPatch` 夹紧与校验：非法值与未知键一律忽略。**没接线的开关标 `hidden: true`**：`describeSettings` 不下发这些项、也不下发「项全被隐藏的空组」，但定义仍留在 `SETTING_SCHEMA`（`findSetting` 照样找得到，恢复只需去掉 `hidden`） | settingsView.test |
 | `identity.js` | 身份设置：玩家默认称呼（≤24 字）＋正文写作人称（一/二/三，默认第二）；`personLabel` 给人称中文名（提示词和召回抬头都用它）、`pronounOf` 给代词；按卡存插件数据 | identity.test |
-| `store.js` | 自持文件存储：整局数据／每轮快照写 `<酒馆数据>/plugin-data/<插件名>/`（[ADR 0058](adr/0058-数据放插件数据区.md)），酒馆只留 `{f,h}` 指针；原子写（.tmp→rename）；按轮次窗口剪枝（窗口＝设置项 `storage.keepTurns`，默认 200、范围 100～1000）、剪掉的挪 `trash/`；`global-words.json` 存**跨局专名词库**（[ADR 0077](adr/0077-全局专名词库.md)）；`dropGame` 删局清理；`pruneAfter` 回退清理（把未来轮次的快照挪 `trash/`） | store.test |
+| `store.js` | 自持文件存储：整局数据／每轮快照写 `<酒馆数据>/plugin-data/<插件名>/`（[ADR 0058](adr/0058-数据放插件数据区.md)），酒馆只留 `{f,h}` 指针；原子写（.tmp→rename）；按轮次窗口剪枝（窗口＝设置项 `storage.keepTurns`，默认 200、范围 100～1000）、剪掉的挪 `trash/`；`global-words.json` 存**跨局专名词库**（[ADR 0077](adr/0077-全局专名词库.md)）；`dropGame` 删局清理；`pruneAfter` 回退清理（把未来轮次的快照挪 `trash/`）；**分叉搬运**：`hasGame`／`copySnapshotsUpTo`（只搬 ≤ 分叉轮，以父局索引为准、子局索引按轮合并）／`copyDeleted`（[ADR 0110](adr/0110-分叉继承档案.md)） | store.test |
 | `segment.js` | 中文分词（按词频动态规划，不是贪心）：`tokenize` / `hasWord` 按词边界判断；内置词表 `assets/dict/zh.txt`（jieba `dict.txt.small` 精简，MIT，1.34MB / 10.9 万词 / 最长 15 字）；**用户词典是单独一层、每轮整体重建**（`setExtraWords` 不累积）：灌当前人姓名/别名＋模糊建档名字＋**跨局专名词库**（ADR 0077） | segment.test |
 | `promptTemplates.js` | 三段可编辑提示词：默认模板、`fillTemplate`（逐字符扫描，不踩 `String.replace` 的 `$&` 坑）、`resolveTemplates`（空串回落默认） | promptTemplates.test |
 | `dataRoot.js` | 数据根定位：`DSH_TAVERN_ARCHIVES_DATA` → `DSH_TAVERN_DATA_DIR` → 从自身安装位置推断 → 插件目录兜底；`samePath` 做跨平台比较 | dataRoot.test |
@@ -1910,7 +1918,7 @@ gap  = 当前轮次 − 最后确认轮次
 | `person.js` | 人物编号 `p<数字>`，永不复用 | person.test |
 | `queue.js` | 串行写队列（整局数据单一写入口） | queue.test |
 | `match.js` | 文本匹配：多字姓名/别名、单字（见 ADR 0010）、线索词 | match.test |
-| `memberBox.js` | 后台成员交卷的中转盒（[ADR 0100](adr/0100-后台成员交卷按派发时定的盒子.md)）：派发任务前 `beginMemberRun(box)` 定下这一轮往哪只盒子交，工具只往当前盒子写（`submitMemberPayload(args)`，同一轮交多次就合并、后交不覆盖先交），`endMemberRun(box)` 收尾 | memberBox.test |
+| `memberBox.js` | 后台成员交卷的中转盒（[ADR 0100](adr/0100-后台成员交卷按派发时定的盒子.md)）：派发任务前 `beginMemberRun(box)` 定下这一轮往哪只盒子交，工具只往当前盒子写（`submitMemberPayload(args)`，同一轮交多次就合并、后交不覆盖先交），`endMemberRun(box)` 收尾；提交前过 `normalizeSubmission` 形状守卫，剥不开的怪形状不入盒、回 `{ok:false}`（[ADR 0109](adr/0109-交卷形状三层兜底.md)） | memberBox.test |
 
 **2026-11-05 补登记：上表漏掉的 15 个模块**（「命题＋指针」改造新增，之前没人往这张表里加；下表 16 行＝这 15 个 ＋ `promptTemplates.js` 的重记一条）
 
@@ -1929,12 +1937,13 @@ gap  = 当前轮次 − 最后确认轮次
 | `writeActions.js` | 写入应用：一条动作 = 一条命题 + 若干指针；四级找命题（序号→校验→精确→宽松→新建） | writeActions.test |
 | `retract.js` | 撤回：`撤回:[{谁,序号}]`——`谁`＝持指针的人，**命题说的是谁由程序按序号查、不要模型报**（同名不同义会摘错人，[ADR 0106](adr/0106-撤回只写谁与约定回到固定提示词.md)）；只摘**本人**的指针，撤到零指针就把命题清掉；只认在场人物、只认本轮素材发过号的命题（[ADR 0102](adr/0102-撤回指针.md)）；返回值带 `aboutId`／`claimText`（在清命题之前抓，调试日志才写得出「谁 → 关于谁 · 命题内容」） | retract.test |
 | `writeMaterial.js` | 写入素材：给每个在场人物挑「跟当前场景有关」的命题 | writeMaterial.test |
-| `payload.js` | 解析模型交回来的 payload（判定／写入两种形状，写入可带 `地点`） | payload.test |
+| `payload.js` | 解析模型交回来的 payload（判定／写入两种形状，写入可带 `地点`）；**交卷形状兜底**：`unwrapPayload` 剥掉模型自造的壳（`{"parameter":"{…}"}` 之类，最多 4 层）、`acceptShape` 判形状认不认得、`normalizeSubmission` 是两处交卷工具共用的入口守卫（[ADR 0109](adr/0109-交卷形状三层兜底.md)） | payload.test、payloadUnwrap.test |
 | `mvuMap.js` | MVU 人物字段映射**已退役**（[ADR 0091](adr/0091-MVU人物字段映射退役.md)）：函数全留着标 `@deprecated`，现在只有 `surveyStatData`（形状诊断）在用 | mvuMap / mvuClaims |
 | `promptTemplates.js` | 三段可编辑提示词：`fillTemplate`（逐字符扫，不踩 `String.replace` 的 `$&`）、`resolveTemplates` | promptTemplates.test |
-| `rollback.js` | 回退清理：`pruneFutureFlags` 把 `flags` 里轮次大于当前轮的记录（`seen`／`left`／`draft`／`fuzzyLeft`／`playerBack`）清掉 | rollback.test |
+| `rollback.js` | 回退清理：`pruneFutureFlags` 把 `flags` 里轮次大于当前轮的记录（`seen`／`left`／`draft`／`fuzzyLeft`／`playerBack`）清掉；分叉继承也复用它剪「分叉点之后的未来」 | rollback.test |
+| `forkInherit.js` | 分叉继承的**纯变换**（[ADR 0110](adr/0110-分叉继承档案.md)）：`inheritGameState(parent, {forkTurn})` 返回子局该有的整局数据——`meta.updatedTurn` 与 `snapshots.index` 截到分叉点、`flags` 走 `pruneFutureFlags`（另补剪 `lastHits`）、**预设三样（`entries`／`mvuChecklist`／`settings.checkedCodes`）丢掉**（归全局＋按卡存）、`cooldowns` 只留 `lastTurn ≤ 分叉点`、分叉点为 0 时带轮次的记录全清、字典／编号照抄、`debugLog` 清空；深拷贝，改子局不影响父局 | forkInherit.test |
 
-**宿主侧（`index.mjs`）与提示词相关的两条**：① 交卷工具（`char_archives_submit`）的说明抽成 `SUBMIT_TOOL_DESCRIPTION` 常量，两处 `description` 共用一份——里面登记了交卷对象的形状（判人五块 ＋ `命题` ＋ 可选 `撤回:[{谁,序号}]`）和「本局有约定栏目时认知要带约定字段」，细则指回系统提示词（[ADR 0105](adr/0105-系统提示词体检.md)）；`tests/hostWiring.test.mjs` 守着「两处都用这个常量」与常量里写着撤回块／约定状态。② `savePrompts` 把面板保存的内容**同步写回 `assets/*.txt`**（空串＝恢复默认，用 `PROMPT_TEMPLATE` / `DEFAULT_TEMPLATES.write` / `DEFAULT_TEMPLATES.recall` 覆盖），写不进去（安装目录只读）就只存插件数据、面板照常能用。
+**宿主侧（`index.mjs`）与提示词相关的两条**：① 交卷工具（`char_archives_submit`）的说明抽成 `SUBMIT_TOOL_DESCRIPTION` 常量，两处 `description` 共用一份——里面登记了交卷对象的形状（判人五块 ＋ `命题` ＋ 可选 `撤回:[{谁,序号}]`）和「本局有约定栏目时认知要带约定字段」，细则指回系统提示词（[ADR 0105](adr/0105-系统提示词体检.md)）；`tests/hostWiring.test.mjs` 守着「两处都用这个常量」与常量里写着撤回块／约定状态。相邻的 schema 同样抽成 `SUBMIT_PARAMETERS` 两处共用：`properties` 列出 `回头测试／建档／改状态／改名／模糊建档／命题／撤回／地点`，`additionalProperties` 保留、**不加 `required`**（[ADR 0109](adr/0109-交卷形状三层兜底.md)）。② `savePrompts` 把面板保存的内容**同步写回 `assets/*.txt`**（空串＝恢复默认，用 `PROMPT_TEMPLATE` / `DEFAULT_TEMPLATES.write` / `DEFAULT_TEMPLATES.recall` 覆盖），写不进去（安装目录只读）就只存插件数据、面板照常能用。
 
 ---
 

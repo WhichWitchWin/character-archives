@@ -478,3 +478,73 @@ test('archive_query：每轮最多调用 2 次', () => {
   assert.ok(block.includes('queryCounter.take('), 'execute 里要按上限拦')
   assert.ok(block.includes('查得太频繁'), '超限要回一句人话，而不是静默失败')
 })
+
+// ── 交卷形状三层兜底（ADR 0109）──
+// 2026-11-12：模型把整份交卷 JSON 当字符串塞进自己编的键（`{parameter:"{…}"}`），
+// 解析器只认顶层键 → 判定与写入两段都 0 条，交卷工具还回 ok，静默空了 24 轮。
+// 三层缺一层都会复发：schema 补字段名（少产生壳）／解析前剥壳（兜底）／
+// 形状不认就退回（让模型自纠）。这组守卫钉住三层的接线位置。
+test('交卷形状：两处 schema 都用带 properties 的常量', () => {
+  assert.match(source, /const SUBMIT_PARAMETERS = \{/u, '要有共用的 schema 常量')
+  const schemaAt = source.indexOf('const SUBMIT_PARAMETERS = {')
+  const schema = source.slice(schemaAt, schemaAt + 900)
+  for (const key of ['回头测试', '建档', '改状态', '改名', '模糊建档', '命题', '撤回', '地点']) {
+    assert.ok(schema.includes(`${key}:`), `schema 要列出「${key}」字段名`)
+  }
+  assert.ok(!/required\s*:/.test(schema), '别加 required：交空 {} 是合法行为')
+  const used = source.match(/parameters:\s*SUBMIT_PARAMETERS/g) || []
+  assert.equal(used.length, 2, `子代理档与成员档都要用这份 schema，实际 ${used.length} 处`)
+})
+
+test('交卷形状：两处 execute 都过形状守卫', () => {
+  // 子代理档的 execute 在 index.mjs，成员档的走 lib/memberBox.js，各一处
+  const guarded = source.match(/normalizeSubmission\(args\)/g) || []
+  assert.equal(guarded.length, 1, `index.mjs 里的子代理档要判形状，实际 ${guarded.length} 处`)
+  assert.match(
+    source,
+    /if \(!guard\.ok\) \{[\s\S]{0,240}?return JSON\.stringify\(\{ ok: false, error: guard\.error \}\)/,
+    '子代理档要退回并带上怎么改',
+  )
+  const memberBox = readFileSync(fileURLToPath(new URL('../plugin/lib/memberBox.js', import.meta.url)), 'utf8')
+  assert.ok(memberBox.includes('normalizeSubmission(args)'), '成员档要过同一个守卫')
+  // 退回要留痕并被 /debug 看见：不留的话「交卷次数 0」会被读成「模型没交」（ADR 0100 的读法）
+  assert.ok(memberBox.includes('active.rejected'), 'memberBox 要记被退回的载荷')
+  assert.ok(source.includes('box.rejected'), '子代理档也要记')
+  assert.ok(source.includes('phase.rejected'), 'runPhase 要把退回记录带出来')
+  assert.ok(source.includes('交卷形状不认'), '判定阶段日志要写清「是被退回，不是没交」')
+})
+
+test('交卷形状：解析前要剥壳，且判定阶段留痕', () => {
+  assert.ok(source.includes('const combinedPayload = unwrapPayload(rawPayload)'), '解析入口要先剥壳（判定与写入共用这一份）')
+  const at = source.indexOf('const combinedPayload = unwrapPayload(rawPayload)')
+  assert.ok(source.slice(at - 200, at + 600).includes('pushDebug(state, \'warn\''), '剥了壳要在 /debug 留痕')
+  // 判定阶段的日志原来只有动作数：故障时看不出模型交了什么，这是拖了 24 轮才发现的原因
+  const judgeAt = source.indexOf('判定阶段返回 ${judgeActions.length}')
+  assert.ok(judgeAt >= 0, '找不到判定阶段日志')
+  const judgeBody = source.slice(judgeAt, judgeAt + 900)
+  assert.ok(judgeBody.includes('载荷形状'), '判定阶段日志要记形状')
+  assert.ok(judgeBody.includes('载荷:'), '判定阶段日志要记原始载荷')
+})
+
+// ── 分叉继承（ADR 0110）──
+// 分叉＝新 gameId，而插件自己的文件按 gameId 存（官方文档：自己写的文件不会随分叉带走），
+// 所以要在宿主通知 `kind:'fork'` 后把父局搬一份给新局。这组守卫钉住「订阅了／只认 fork／
+// 会搬三样东西／不覆盖已有进度」。
+test('分叉：订阅 onTimelineChanged，只认 fork，把父局搬给新局', () => {
+  assert.ok(source.includes('onTimelineChanged'), '要订阅时间线变化（名字是 onTimelineChanged）')
+  // 从**注册那一行**开始切：源码里 `onTimelineChanged` 还有别处（helper 的注释）
+  const at = source.indexOf('ctx.tavern.onTimelineChanged(async')
+  assert.ok(at >= 0, '找不到 onTimelineChanged 的注册')
+  const block = source.slice(at, at + 4000)
+  assert.ok(block.includes("kind !== 'fork'"), '只处理分叉，rollback／regenerate 等一律忽略')
+  assert.ok(block.includes('fromGameId'), '要用宿主给的父局 id')
+  assert.ok(block.includes('hasGame('), '子局已经有数据就不覆盖（幂等，也绝不踩玩家进度）')
+  assert.ok(block.includes('inheritGameState('), '整局数据要剪到分叉点')
+  assert.ok(block.includes('copySnapshotsUpTo('), '快照只搬到分叉点为止')
+  assert.ok(block.includes('copyDeleted('), '已删名单要跟着走')
+  assert.ok(block.includes('saveGameData('), '要补一条酒馆侧指针，否则读不到自己写的文件')
+  // 分叉点绝不能退回「父局最新轮」：宿主在 turn ≤ 0 时不给 turn，退回就会把未来搬过去
+  assert.ok(block.includes('childTurnOf('), 'turn 缺失时要问子局自己的当前轮')
+  assert.ok(!block.includes('parent.meta?.updatedTurn'), '不许拿父局最新轮当分叉点')
+  assert.ok(block.includes("kind !== 'fork'") && block.indexOf('hasGame(') > block.indexOf('stateWriteQueue('), '闸门要在队列任务里复查')
+})
