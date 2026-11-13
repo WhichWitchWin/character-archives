@@ -216,10 +216,10 @@ Not yet.
 
 ## Status
 
-**Version `0.1.0`**, released—see [Releases](https://github.com/WhichWitchWin/character-archives/releases) for the install package.
+**Version `0.1.1`**, released—see [Releases](https://github.com/WhichWitchWin/character-archives/releases) for the install package.
 
 - **Working**: profiling, per-turn consolidation, recall injection, full panel CRUD, column presets, editable prompts, export/import, settings
-- **Tests**: 804 passing (`npm test`), also run on Linux in CI
+- **Tests**: 840 passing (`npm test`), also run on Linux in CI
 - **Zero runtime dependencies**: no `dependencies` in `plugin/`
 - **Not implemented**: cross-plugin API, same-name different-person, standalone preset import/export, in-game time for non-MVU cards
 
