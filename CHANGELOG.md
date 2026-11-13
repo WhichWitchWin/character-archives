@@ -6,7 +6,7 @@
 > 想知道**项目内部**的逐条时间线（含过程与验证细节）→ 看 [docs/CHANGELOG.md](docs/CHANGELOG.md)。
 > 想知道**当前**是什么样 → 看 [docs/DESIGN.md](docs/DESIGN.md)。
 
-## [未发布]
+## [0.1.2] — 2026-11-14
 
 ### 新增
 

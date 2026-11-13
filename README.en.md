@@ -216,7 +216,7 @@ Not yet.
 
 ## Status
 
-**Version `0.1.1`**, released—see [Releases](https://github.com/WhichWitchWin/character-archives/releases) for the install package.
+**Version `0.1.2`**, released—see [Releases](https://github.com/WhichWitchWin/character-archives/releases) for the install package.
 
 - **Working**: profiling, per-turn consolidation, recall injection, full panel CRUD, column presets, editable prompts, export/import, settings, **manual re-run** (one button to redo the latest turn's write-back when the automatic one missed)
 - **Tests**: 851 passing (`npm test`), also run on Linux in CI
