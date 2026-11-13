@@ -282,12 +282,43 @@ const store = createFileStore({ root: STORE_ROOT })
  */
 const stateWriteQueue = createQueue()
 
-// 「这一（局＋轮）的写回正在跑」标记（ADR 0111）。
+// 「这一（局＋轮）的档案结算／写回正在跑」占旗表（ADR 0111）。
 // 为什么需要：宿主的 `getTurnState().busy` 只反映**前台生成/后台结算**，它不知道插件自己的后台任务
-// ——`onTurnSettled` 的处理器宿主不等。没有这个标记，玩家在自动写回还没跑完时点「补写这一轮」，
+// ——`onTurnSettled` 的处理器宿主不等。没有这面旗，玩家在自动写回还没跑完时点「补写这一轮」，
 // 同一轮会并发跑两遍：同轮快照互相覆盖（同名文件后写覆盖先写）、整局数据整份覆盖写。
-const writebackInFlight = new Set()
-const writebackKey = (gameId, turn) => `${String(gameId ?? '')}\u0000${Number.isInteger(turn) ? turn : 0}`
+//
+// 用**引用计数**而不是 Set：同一轮可能有两处同时跑（自动结算 + 手动补写，或重生成重投），
+// 用 Set 的话先结束的那一方会把旗清掉，另一方还在跑却「不在飞行中」了。
+const writebackInFlight = new Map()
+
+/** 旗的键：局 + 轮。轮次必须是正整数（宿主若给成字符串也归一），否则返回 null＝不占旗。 */
+function writebackKey(gameId, turn) {
+  const at = Number(turn)
+  if (!Number.isInteger(at) || at < 1) return null
+  return `${String(gameId ?? '')}\u0000${at}`
+}
+
+/** 占旗。返回的 key 要原样交给 `writebackEnd`（拿不到合法轮次时返回 null，end 会忽略）。 */
+function writebackBegin(gameId, turn) {
+  const key = writebackKey(gameId, turn)
+  if (!key) return null
+  writebackInFlight.set(key, (writebackInFlight.get(key) ?? 0) + 1)
+  return key
+}
+
+/** 清旗（按引用计数减 1，减到 0 才真正删）。key 为 null 时什么也不做。 */
+function writebackEnd(key) {
+  if (!key) return
+  const left = (writebackInFlight.get(key) ?? 0) - 1
+  if (left > 0) writebackInFlight.set(key, left)
+  else writebackInFlight.delete(key)
+}
+
+/** 这一（局＋轮）现在有没有写回在跑。 */
+function isWritebackInFlight(gameId, turn) {
+  const key = writebackKey(gameId, turn)
+  return Boolean(key && writebackInFlight.get(key))
+}
 
 /** 通知面板「档案变了」（自动结算与手动补写共用；失败不影响游戏）。 */
 async function publishArchiveChanged(ctx, gameId, data) {
@@ -914,12 +945,18 @@ function findMentioned(persons, text) {
  * 写回一轮：判定（人物级）→ 程序建档改状态 → 写入（值级）→ 校验落盘。
  * 每一步都只读/写内存里的 state 与 snapshot，最后由调用方统一 saveGameData。
  */
-async function runWriteback(ctx, state, { gameId, turn, text, textVersion, settings, mvu = undefined }) {
+async function runWriteback(ctx, state, { gameId, turn, text, textVersion, settings, mvu = undefined, prune = true }) {
   // 回退清理：回退后开始的新一轮，把「未来轮次」的旧快照挪进 trash。
   // 命题/指针就住在快照里，旧快照删掉它们自然没了；冷却表只对存在的指针生效，脏键无害。
-  const rolled = store.pruneAfter(gameId, turn)
-  if (rolled.removed.length) {
-    pushDebug(state, 'info', `回退清理：删掉 ${rolled.removed.length} 份旧轮次快照`, { 轮次: rolled.removed.slice(0, 10) })
+  //
+  // `prune:false` 给**手动补写**用（ADR 0111）：补写只补最新一轮，本来就没有「未来轮次」要清；
+  // 而万一玩家在补写跑模型期间推进了剧情，这一步会把**新产生的那一轮**快照当「未来」挪走——
+  // 那正是我们最该保护的、刚写好的档案。
+  if (prune) {
+    const rolled = store.pruneAfter(gameId, turn)
+    if (rolled.removed.length) {
+      pushDebug(state, 'info', `回退清理：删掉 ${rolled.removed.length} 份旧轮次快照`, { 轮次: rolled.removed.slice(0, 10) })
+    }
   }
 
   // trash 过期回收（P22③）：按设置的天数清掉文件名时间戳超龄的废文件（默认 15 天）。
@@ -1780,6 +1817,17 @@ export function apply(ctx) {
   // 每轮结算完成后：判定 → 建档改状态 → 写入 → 落盘（§10.1、ADR 0029）
   ctx.tavern.onTurnSettled(async (event) => {
     const { gameId, turn, text, textVersion } = event
+    // 这一轮正被**手动补写**占着（重生成／编辑正文会重投同轮结算）：跳过这次自动结算，
+    // 别让两遍写回互相覆盖（ADR 0111）。宁可少跑一次，也不能把刚补好的档案冲掉。
+    if (isWritebackInFlight(gameId, turn)) {
+      ctx.tavern.log?.warn?.(`人物档案馆：第 ${turn} 轮正在手动补写，这次自动结算跳过`)
+      return
+    }
+    // 这一（局＋轮）从**第一毫秒**就占旗（ADR 0111）：宿主的 busy 管不到插件自己的后台任务，
+    // 玩家随时可能在面板上点「补写」，晚一步占旗就等于放它进来双跑（评审 C1）。
+    // 下面整段都包在 try 里（finally 一定清旗）；**没重新缩进**是为了让 diff 只碰首尾几行。
+    const flight = writebackBegin(gameId, turn)
+    try {
     const state = await loadGameState(ctx.tavern, gameId)
     pushDebug(state, 'info', `第 ${turn} 轮结算开始`, { 正文字数: String(text ?? '').length, textVersion })
     state.meta.updatedTurn = turn
@@ -1847,11 +1895,6 @@ export function apply(ctx) {
 
     // 「关闭」档不跑模型，只保留程序记账（ADR 0028）
     if (settings.writeback?.mode !== 'off') {
-      // 打一个「这一轮正在写回」的标记（ADR 0111）：宿主不知道插件自己的后台任务在跑
-      // （onTurnSettled 的处理器它不等），没有这个标记的话，玩家这时候点「补写」会并发跑两遍，
-      // 同轮快照互相覆盖、整局数据后写覆盖先写。
-      const flight = writebackKey(gameId, turn)
-      writebackInFlight.add(flight)
       try {
         await runWriteback(ctx, state, { gameId, turn, text: String(text ?? ''), textVersion, settings, mvu })
         pushDebug(state, 'info', '写回完成', state.debugWriteback)
@@ -1859,8 +1902,6 @@ export function apply(ctx) {
         // 写回失败只跳过本轮，绝不影响游戏
         ctx.tavern.log?.warn?.('人物档案馆：写回失败，本轮跳过', error)
         pushDebug(state, 'error', '写回失败（本轮跳过）', { error: String(error?.message ?? error), stack: String(error?.stack ?? '').split('\n').slice(0, 4) })
-      } finally {
-        writebackInFlight.delete(flight)
       }
     }
 
@@ -1869,6 +1910,10 @@ export function apply(ctx) {
     // 推一个「档案变了」的信号（M4-16）：面板收到就自动重读，不用轮询。
     // data 里带轮次，保证每次结算内容都不同——平台只在内容变化时才通知订阅方。
     await publishArchiveChanged(ctx, gameId, { turn, gt: diag?.gt ?? null, loc: diag?.loc ?? null })
+    } finally {
+      // 清旗要等到**落盘之后**：先清旗再落盘，那一瞬间补写就能进来覆盖（评审 Important 2）
+      writebackEnd(flight)
+    }
   })
 
   // ── 手动补写（ADR 0111）──
@@ -1896,7 +1941,7 @@ export function apply(ctx) {
         turnState,
         mode: settings.writeback?.mode,
         // 宿主不知道插件自己的后台写回在跑，这一条只能由我们自己判（ADR 0111 的 C1）
-        inFlight: turn != null && writebackInFlight.has(writebackKey(key, turn)),
+        inFlight: turn != null && isWritebackInFlight(key, turn),
       })
       if (!verdict.ok) return { ok: false, reason: verdict.reason }
 
@@ -1913,8 +1958,7 @@ export function apply(ctx) {
       // 回执只认**这一次**的计数：`runWriteback` 在「本轮没有可写入的人」时会早退、根本不写
       // `debugWriteback`；不清空的话我们会把上一轮的数字当成本次结果报给玩家
       state.debugWriteback = null
-      const flight = writebackKey(key, turn)
-      writebackInFlight.add(flight)
+      const flight = writebackBegin(key, turn)
       try {
         await runWriteback(ctx, state, {
           gameId: key,
@@ -1923,6 +1967,9 @@ export function apply(ctx) {
           textVersion: content.textVersion,
           settings,
           mvu,
+          // 补写不做回退清理：它只补最新一轮，没有「未来轮次」要清；
+          // 万一玩家在跑模型期间推进了剧情，这一步反而会把刚写好的新一轮快照挪走（评审 Important 6）
+          prune: false,
         })
       } catch (error) {
         // 模型那边失败不能把面板打崩：落一条日志（带上这次为什么失败），再用一句人话回面板
@@ -1934,23 +1981,29 @@ export function apply(ctx) {
         await saveGameState(ctx, key, state).catch(() => {})
         return { ok: false, reason: `补写失败：${String(error?.message ?? error)}` }
       } finally {
-        writebackInFlight.delete(flight)
+        writebackEnd(flight)
       }
 
       // 补写要等模型（秒级）：这期间玩家可能已经推进到下一轮并落盘。那样就**不能**拿手里这份旧 state
       // 整份覆盖回去（会把 flags／编号／轮次写回过去，还可能让新建的人拿到已用过的编号，违反 ADR 0004）。
-      // 此时只把编号抬到安全值，其余丢弃——快照已经写了，但要保证以后不会撞号。
+      // 读回来不是正整数也按「读不准」处理——宁可作废，也不能把旧状态盖到新进度上。
       const after = typeof ctx.tavern.getTurnState === 'function'
         ? await ctx.tavern.getTurnState({ gameId: key })
         : null
-      const nowTurn = Number.isInteger(after?.turn) ? after.turn : turn
-      if (nowTurn !== turn) {
-        const fresh = await loadGameState(ctx.tavern, key)
-        fresh.nextId = Math.max(Number(fresh.nextId) || 1, Number(state.nextId) || 1)
-        pushDebug(fresh, 'warn', `手动补写作废：这期间剧情推进到第 ${nowTurn} 轮`, { 补写轮次: turn })
-        await saveGameState(ctx, key, fresh).catch(() => {})
-        await publishArchiveChanged(ctx, key, { turn: nowTurn, manual: 'discarded' })
-        return { ok: false, reason: `补写期间剧情推进到第 ${nowTurn} 轮，这次结果没保存（可以再点一次）` }
+      const nowTurn = Number.isInteger(after?.turn) && after.turn >= 1 ? after.turn : null
+      if (nowTurn == null || nowTurn !== turn) {
+        // 只把编号抬到安全值：其余字段不敢写（写了就可能覆盖这期间新落盘的那一轮）
+        try {
+          const fresh = await loadGameState(ctx.tavern, key)
+          fresh.nextId = Math.max(Number(fresh.nextId) || 1, Number(state.nextId) || 1)
+          pushDebug(fresh, 'warn', `手动补写作废：这期间剧情${nowTurn == null ? '状态读不准' : `推进到第 ${nowTurn} 轮`}`, { 补写轮次: turn })
+          await saveGameState(ctx, key, fresh)
+          await publishArchiveChanged(ctx, key, { turn: nowTurn ?? turn, manual: 'discarded' })
+        } catch (error) {
+          // 连"抬编号"都失败：至少留痕，别静默——以后可能撞号（ADR 0004）
+          ctx.tavern.log?.warn?.('人物档案馆：手动补写作废后抬编号失败（可能撞号）', error)
+        }
+        return { ok: false, reason: `补写期间剧情${nowTurn == null ? '有变化但读不准' : `推进到第 ${nowTurn} 轮`}，这次结果没保存（可以再点一次）` }
       }
 
       const counts = state.debugWriteback ?? {}

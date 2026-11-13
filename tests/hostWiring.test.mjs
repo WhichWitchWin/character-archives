@@ -535,26 +535,37 @@ test('交卷形状：解析前要剥壳，且判定阶段留痕', () => {
 // 面板上一个按钮让它再跑一次，复用自动结算那套 runWriteback，不另写一套写入逻辑。
 test('补写：handle 复用 runWriteback，结算中拒绝，补完落盘', () => {
   assert.ok(source.includes("'character-archives/retry-writeback'"), '要注册 retry-writeback')
-  const at = source.indexOf("'character-archives/retry-writeback'")
+  const at = source.indexOf("ctx.tavern.handle('character-archives/retry-writeback'")
+  assert.ok(at >= 0, '找不到 retry-writeback 的注册行')
   // 切到**下一个 handle** 为止：固定字符数会跨进 export 那一段，以后就假通过了
-  const next = source.indexOf('ctx.tavern.handle(', at + 10)
-  const block = source.slice(at, next > at ? next : at + 3000)
+  const next = source.indexOf('\n  ctx.tavern.handle(', at + 10)
+  assert.ok(next > at, '找不到下一个 handle，切片不可信')
+  const block = source.slice(at, next)
+  assert.ok(block.includes('retryLocks.delete(key)'), '切片应覆盖到本 handle 结束（finally 里清锁）')
+  assert.ok(!block.includes("'character-archives/export'"), '切片不该跨进下一个 handle')
   assert.ok(block.includes('retryRefusal('), '能不能补交给纯逻辑判（结算中/没结算过/写入关了）')
   assert.ok(block.includes('getTurnState('), '要先问宿主「这一轮忙不忙」')
   assert.ok(block.includes('runWriteback('), '要复用自动结算那套写回，不另写一套')
   assert.ok(block.includes('saveGameState('), '补完要落盘')
   assert.ok(block.includes('retrySummary('), '回执用一句话人话')
   assert.ok(source.includes('retryLocks'), '同一局同时只许补一次（双击/两头点都不打架）')
-  // 宿主不知道插件自己的后台写回在跑：必须自己打标记，否则同一轮会并发跑两遍（评审 C1）
-  assert.ok(source.includes('writebackInFlight'), '要有「这一轮写回在跑」的标记')
-  assert.match(source, /writebackInFlight\.add\(flight\)[\s\S]{0,200}?runWriteback\(/, '自动写回那一路要打标记')
-  assert.ok(block.includes('writebackInFlight.has('), '补写前要判「这一轮的自动写回还在跑」')
+  // 宿主不知道插件自己的后台写回在跑：必须自己占旗，否则同一轮会并发跑两遍（评审 C1）
+  assert.ok(source.includes('writebackBegin(') && source.includes('writebackEnd('), '要有占旗/清旗两个入口')
+  assert.ok(source.includes('isWritebackInFlight('), '要能查「这一（局＋轮）在跑吗」')
+  assert.ok(block.includes('isWritebackInFlight('), '补写前要查旗')
+  // 配对：自动结算 + 手动补写各占一次（引用计数，两次跑同轮不会互相清旗）
+  const begins = source.match(/writebackBegin\(/g) || []
+  const ends = source.match(/writebackEnd\(/g) || []
+  assert.ok(begins.length >= 3, `定义 1 处 + 两条路径各 1 处，实际 ${begins.length}`)
+  assert.equal(ends.length, begins.length, `占旗/清旗要配对，实际 ${begins.length} / ${ends.length}`)
   // 补写要跑模型，期间玩家可能已经推进到下一轮：不能拿旧 state 整份覆盖回去
   assert.ok(block.includes('nowTurn !== turn'), '剧情推进了就作废这次结果，别覆盖新状态')
   // 不传 mvu 的话补出来的指针会挂上一轮的旧游戏时间
   assert.ok(block.includes('parseMvu('), '要现取 MVU 变量')
   // 补完要通知面板，不然其它打开的面板一直是旧档案
   assert.ok(block.includes('publishArchiveChanged('), '补完要推「档案变了」')
+  // 补写不该做回退清理（pruneAfter 会把「用户补写期间新产生的轮次」快照挪走）
+  assert.ok(block.includes('prune: false'), '补写要跳过 runWriteback 里的 pruneAfter')
   // 只补最新一轮：轮次必须来自宿主状态，不许面板传进来
   assert.ok(!/retry-writeback[\s\S]{0,800}?turn:\s*Number\(payload/.test(source), '不许让面板指定轮次')
 })
