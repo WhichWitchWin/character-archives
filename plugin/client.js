@@ -442,6 +442,20 @@ window.__ModuleLoader__.load({
       return all.slice(0, COLUMN_LIMIT)
     }
 
+    // __RANGE_HELPER_START__
+    // Shift 区间选择：按 order（面板上**看得见**的顺序）取 from..to 之间（含两端）的所有 id。
+    // 任何一头不在 order 里（栏目折叠、刚换了人、刚被删掉）就只返回 toId —— 宁可少选，不猜区间。
+    function rangeIds(order, fromId, toId) {
+      const list = Array.isArray(order) ? order.map(String) : []
+      const to = String(toId)
+      const from = String(fromId)
+      const a = list.indexOf(from)
+      const b = list.indexOf(to)
+      if (a < 0 || b < 0) return [to]
+      return list.slice(Math.min(a, b), Math.max(a, b) + 1)
+    }
+    // __RANGE_HELPER_END__
+
     // 「还有 N 条（点开）」/「收起」：两块共用，别各写一份。
     function MoreToggle({ total, expanded, onToggle }) {
       if (total <= COLUMN_LIMIT) return null
@@ -545,6 +559,9 @@ window.__ModuleLoader__.load({
       const [multi, setMulti] = useState(false)
       const [pickedClaims, setPickedClaims] = useState(() => new Set())
       const [pickedCogs, setPickedCogs] = useState(() => new Set())
+      // Shift 区间选择的锚点（命题/认知各记各的）
+      const claimAnchor = useRef(null)
+      const cogAnchor = useRef(null)
 
       const toggleColumn = (code) => {
         setOpenColumns((prev) => {
@@ -604,6 +621,8 @@ window.__ModuleLoader__.load({
         setMulti(false)
         setPickedClaims(new Set())
         setPickedCogs(new Set())
+        claimAnchor.current = null
+        cogAnchor.current = null
       }
       // 后端单次上限 200：全选超过就只选前 200，并说一声（不然点删除会被后端直接拒）
       const pickAll = (setter, ids) => {
@@ -614,6 +633,33 @@ window.__ModuleLoader__.load({
         }
         setter(new Set(ids))
       }
+
+      // ── Shift 区间选择（ADR 0112）──
+      // 「看得见的行」＝按栏目顺序、栏内按显示顺序（折叠的栏目只算截断后那些）——用户看到什么就能连选什么
+      const visibleClaimIds = (row.aboutColumns ?? [])
+        .flatMap((col) => shownItems(col.claims ?? [], openColumns.has(col.code)).map((one) => String(one.claimId)))
+      const visibleCogIds = (row.cognitionColumns ?? [])
+        .flatMap((col) => shownItems(col.items ?? [], openColumns.has(col.code)).map((one) => String(one.claimId)))
+      // 普通点：切这一条并把锚点挪过来；Shift 点：把锚点到这一条之间的行**并入**选择（锚点不动）
+      const pickOne = (event, setter, order, anchorRef, id) => {
+        const key = String(id)
+        if (event?.shiftKey && anchorRef.current != null) {
+          const ids = rangeIds(order, anchorRef.current, key)
+          setter((prev) => {
+            const next = new Set(prev)
+            for (const one of ids) next.add(one)
+            return next
+          })
+          return
+        }
+        togglePick(setter, key)
+        anchorRef.current = key
+      }
+      // 换人（或详情重挂）时清锚点：否则 Shift 会按上一个人的顺序连选
+      useEffect(() => {
+        claimAnchor.current = null
+        cogAnchor.current = null
+      }, [row.id])
 
       // 姓名和别名**一起**提交：按「提交后的样子」校验，这样把旧姓名挪进别名不用绕占位符。
       const saveNames = () => {
@@ -671,6 +717,7 @@ window.__ModuleLoader__.load({
             },
             multi ? '退出多选' : '多选',
           ),
+          multi ? h('span', { style: muted }, 'Shift + 点选可连选一段') : null,
           multi
             ? h('button', {
                 onClick: () => pickAll(setPickedClaims, allClaimIds),
@@ -790,8 +837,8 @@ window.__ModuleLoader__.load({
                                 ? h('input', {
                                     type: 'checkbox',
                                     checked: pickedClaims.has(String(claim.claimId)),
-                                    onChange: () => togglePick(setPickedClaims, claim.claimId),
-                                    title: '选中这条命题（删除时连「谁知道」一起删）',
+                                    onChange: (event) => pickOne(event, setPickedClaims, visibleClaimIds, claimAnchor, claim.claimId),
+                                    title: '选中这条命题（删除时连「谁知道」一起删）；按住 Shift 再点一条可连续选一段',
                                   })
                                 : null,
                               h(
@@ -879,8 +926,8 @@ window.__ModuleLoader__.load({
                           ? h('input', {
                               type: 'checkbox',
                               checked: pickedCogs.has(String(cog.claimId)),
-                              onChange: () => togglePick(setPickedCogs, cog.claimId),
-                              title: '选中这条认知（只删「谁知道」，命题本身不动）',
+                              onChange: (event) => pickOne(event, setPickedCogs, visibleCogIds, cogAnchor, cog.claimId),
+                              title: '选中这条认知（只删「谁知道」，命题本身不动）；按住 Shift 再点一条可连续选一段',
                             })
                           : null,
                         h(

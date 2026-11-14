@@ -262,9 +262,9 @@ test('窄面板：一栏超过 6 条先只给前 6 条，剩下的点开', () =>
   assert.ok(client.includes('COLUMN_LIMIT = 6'), '阈值要写成一个常量 6')
   assert.ok(view.includes('还有 ${'), '要有「还有 N 条」的入口')
   assert.ok(view.includes('（点开）'), '要写清点开才能看全')
-  // 两块都得用上，不能只管「他是什么样」
+  // 两块都得用上，不能只管「他是什么样」；另外多选/Shift 连选会再用两次（算「看得见的行」）
   const used = view.match(/shownItems\(/gu) ?? []
-  assert.equal(used.length, 3, `shownItems 要有定义 + 两处使用，实际 ${used.length} 处`)
+  assert.ok(used.length >= 3, `shownItems 要有定义 + 两块各用一次，实际 ${used.length} 处`)
 })
 
 // 2026-11 改回常显：以前把改名／锁／眼睛／删除收进「⋯」，玩家得点两下才看得见；

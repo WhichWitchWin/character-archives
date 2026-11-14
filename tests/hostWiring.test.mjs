@@ -610,6 +610,20 @@ test('批量删除：面板有多选开关、勾选框与两个批量按钮', ()
   assert.ok(client.includes('删除选中认知'), '认知批量按钮文案')
 })
 
+test('批量删除：Shift 点选按「看得见的顺序」连选，命题/认知各记锚点', () => {
+  const client = readFileSync(fileURLToPath(new URL('../plugin/client.js', import.meta.url)), 'utf8')
+  assert.ok(client.includes('__RANGE_HELPER_START__'), '区间函数要被标记包起来（测试直接跑这份代码）')
+  assert.ok(client.includes('shiftKey'), '要识别 Shift 点击')
+  assert.ok(client.includes('rangeIds('), '要复用区间函数')
+  assert.ok(client.includes('visibleClaimIds') && client.includes('visibleCogIds'), '区间按「看得见的行」算')
+  assert.ok(
+    client.includes('shownItems(col.claims') && client.includes('shownItems(col.items'),
+    '可见顺序要经过 shownItems（栏目折叠时不算被截掉的行）',
+  )
+  assert.ok(client.includes('claimAnchor') && client.includes('cogAnchor'), '命题与认知各记各的锚点')
+  assert.ok(client.includes('Shift + 点选可连选一段'), '面板上要有一句提示，不然没人知道能这么点')
+})
+
 test('分叉：订阅 onTimelineChanged，只认 fork，把父局搬给新局', () => {
   assert.ok(source.includes('onTimelineChanged'), '要订阅时间线变化（名字是 onTimelineChanged）')
   // 从**注册那一行**开始切：源码里 `onTimelineChanged` 还有别处（helper 的注释）
