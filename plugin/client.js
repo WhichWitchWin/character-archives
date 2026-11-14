@@ -541,6 +541,10 @@ window.__ModuleLoader__.load({
       const [openCognitions, setOpenCognitions] = useState(true)
       // 哪几栏已经点开「还有 N 条」：按栏目码记，两块共用一个集合（码不会同时出现在两边之外）
       const [openColumns, setOpenColumns] = useState(() => new Set())
+      // 批量多选（ADR 0112）：一个开关 + 两套选中集合（命题 / 认知）。关掉开关就清空。
+      const [multi, setMulti] = useState(false)
+      const [pickedClaims, setPickedClaims] = useState(() => new Set())
+      const [pickedCogs, setPickedCogs] = useState(() => new Set())
 
       const toggleColumn = (code) => {
         setOpenColumns((prev) => {
@@ -563,6 +567,52 @@ window.__ModuleLoader__.load({
         } finally {
           setBusy('')
         }
+      }
+
+      // ── 批量多选（ADR 0112）──
+      // 选中集合统一按 String(claimId) 存：面板里同一个编号可能是数字也可能是字符串
+      const togglePick = (setter, id) => setter((prev) => {
+        const key = String(id)
+        const next = new Set(prev)
+        if (next.has(key)) next.delete(key)
+        else next.add(key)
+        return next
+      })
+      const allClaimIds = (row.aboutColumns ?? []).flatMap((col) => (col.claims ?? []).map((one) => String(one.claimId)))
+      const allCogIds = (row.cognitionColumns ?? []).flatMap((col) => (col.items ?? []).map((one) => String(one.claimId)))
+      // 一次请求删一批：后端一次读快照、一次落盘（逐条调会写 N 次文件，中途失败还会删一半）
+      const batchDelete = async (handle, payload, doneText) => {
+        setBusy('删除中…')
+        setHint('')
+        try {
+          const result = await tavernUi.callHost(`${PLUGIN}/${handle}`, { gameId, ...payload })
+          if (!result?.ok) {
+            setHint(result?.reason ?? '没删成')
+            return
+          }
+          setHint(result.reason || doneText(result))
+          setPickedClaims(new Set())
+          setPickedCogs(new Set())
+          onChanged?.()
+        } catch (error) {
+          setHint(`删除失败：${String(error?.message || error)}`)
+        } finally {
+          setBusy('')
+        }
+      }
+      const leaveMulti = () => {
+        setMulti(false)
+        setPickedClaims(new Set())
+        setPickedCogs(new Set())
+      }
+      // 后端单次上限 200：全选超过就只选前 200，并说一声（不然点删除会被后端直接拒）
+      const pickAll = (setter, ids) => {
+        if (ids.length > 200) {
+          window.alert(`一次最多删 200 条，已替你选中前 200 条（这块一共 ${ids.length} 条）`)
+          setter(new Set(ids.slice(0, 200)))
+          return
+        }
+        setter(new Set(ids))
       }
 
       // 姓名和别名**一起**提交：按「提交后的样子」校验，这样把旧姓名挪进别名不用绕占位符。
@@ -606,6 +656,79 @@ window.__ModuleLoader__.load({
             { onClick: saveNames, disabled: Boolean(busy), style: { ...iconBtn, fontSize: font.xs } },
             '保存',
           ),
+        ),
+        // 多选条（ADR 0112）：开关 + 全选/清空 + 两个批量删除按钮（没选中时禁用）
+        h(
+          'div',
+          { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', fontSize: font.xs } },
+          h(
+            'button',
+            {
+              onClick: () => { if (multi) leaveMulti(); else setMulti(true) },
+              disabled: Boolean(busy),
+              style: { ...iconBtn, fontSize: font.xs },
+              title: '多选后可以一次删掉多条命题或认知',
+            },
+            multi ? '退出多选' : '多选',
+          ),
+          multi
+            ? h('button', {
+                onClick: () => pickAll(setPickedClaims, allClaimIds),
+                style: { ...iconBtn, fontSize: font.xxs },
+              }, `全选命题（${allClaimIds.length}）`)
+            : null,
+          multi
+            ? h('button', {
+                onClick: () => pickAll(setPickedCogs, allCogIds),
+                style: { ...iconBtn, fontSize: font.xxs },
+              }, `全选认知（${allCogIds.length}）`)
+            : null,
+          multi
+            ? h('button', {
+                onClick: () => { setPickedClaims(new Set()); setPickedCogs(new Set()) },
+                style: { ...iconBtn, fontSize: font.xxs },
+              }, '清空')
+            : null,
+          multi
+            ? h('button', {
+                onClick: () => {
+                  if (!pickedClaims.size) return
+                  if (!window.confirm(`删掉选中的 ${pickedClaims.size} 条命题？\n\n指向它们的「谁知道」会一起删掉。`)) return
+                  batchDelete(
+                    'delete-claims',
+                    { claimIds: [...pickedClaims] },
+                    (result) => `已删 ${result.removed} 条命题（连带 ${result.removedPointers} 条认知）`,
+                  )
+                },
+                disabled: Boolean(busy) || !pickedClaims.size,
+                style: {
+                  ...iconBtn,
+                  fontSize: font.xxs,
+                  color: pickedClaims.size ? ui.danger : undefined,
+                  opacity: pickedClaims.size ? 1 : 0.45,
+                },
+              }, `删除选中命题（${pickedClaims.size}）`)
+            : null,
+          multi
+            ? h('button', {
+                onClick: () => {
+                  if (!pickedCogs.size) return
+                  if (!window.confirm(`删掉「${row.name}」的 ${pickedCogs.size} 条认知？\n\n只删「谁知道」，命题本身不动。`)) return
+                  batchDelete(
+                    'delete-cognitions',
+                    { personId: row.id, claimIds: [...pickedCogs] },
+                    (result) => `已删 ${result.removed} 条认知`,
+                  )
+                },
+                disabled: Boolean(busy) || !pickedCogs.size,
+                style: {
+                  ...iconBtn,
+                  fontSize: font.xxs,
+                  color: pickedCogs.size ? ui.danger : undefined,
+                  opacity: pickedCogs.size ? 1 : 0.45,
+                },
+              }, `删除选中认知（${pickedCogs.size}）`)
+            : null,
         ),
         // 两块放在一个会换行的行里：宽了并排、窄了自动上下堆叠。
         // 侧栏只有三四百像素时并排会挤成两条缝——这里用纯 CSS（flexWrap + 每块最小 240px），
@@ -663,6 +786,14 @@ window.__ModuleLoader__.load({
                                 key: claim.claimId,
                                 style: { display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' },
                               },
+                              multi
+                                ? h('input', {
+                                    type: 'checkbox',
+                                    checked: pickedClaims.has(String(claim.claimId)),
+                                    onChange: () => togglePick(setPickedClaims, claim.claimId),
+                                    title: '选中这条命题（删除时连「谁知道」一起删）',
+                                  })
+                                : null,
                               h(
                                 'span',
                                 {
@@ -744,6 +875,14 @@ window.__ModuleLoader__.load({
                             paddingBottom: 2,
                           },
                         },
+                        multi
+                          ? h('input', {
+                              type: 'checkbox',
+                              checked: pickedCogs.has(String(cog.claimId)),
+                              onChange: () => togglePick(setPickedCogs, cog.claimId),
+                              title: '选中这条认知（只删「谁知道」，命题本身不动）',
+                            })
+                          : null,
                         h(
                           'span',
                           {

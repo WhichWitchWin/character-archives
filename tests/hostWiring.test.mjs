@@ -381,11 +381,12 @@ function handleBody(handle) {
 }
 
 // 删命题必须顺手摘掉指向它的指针：留着就是悬空指针（面板会去查不存在的命题）。
-test('delete-claim：先摘命题，同时把指向它的指针一起摘掉', () => {
+// 「一起摘」的具体规则在 lib/batchDelete.js（单条与批量共用），由 batchDelete.test 覆盖。
+test('delete-claim：交给纯逻辑一起摘，并把掉了几条指针报回去', () => {
   const body = handleBody('delete-claim')
-  assert.ok(body.some((line) => line.includes('dropClaim(')), '要摘命题')
-  assert.ok(body.some((line) => line.includes('pointersTo(')), '要先列出指向它的指针')
-  assert.ok(body.some((line) => line.includes('dropPointer(')), '要把那些指针摘掉，不留悬空')
+  assert.ok(body.some((line) => line.includes('dropClaims(')), '要摘命题（连带指针）')
+  assert.ok(body.some((line) => line.includes('pointers: snapshot.pt')), '指针必须取自快照（传错数组＝静默删不掉）')
+  assert.ok(body.some((line) => line.includes('writebackBusyReason(')), '写回在跑时要让路')
   assert.ok(body.some((line) => line.includes('saveSnapshot(')), '要落盘')
   assert.ok(body.some((line) => line.includes('removedPointers')), '要把摘掉几条指针报回去')
 })
@@ -401,7 +402,9 @@ test('delete-claim：gameId 与 claimId 都要校验', () => {
 // 命题一删，他自己那条记录就跟着没了。
 test('delete-cognition：只摘指针，绝不删命题', () => {
   const body = handleBody('delete-cognition')
-  assert.ok(body.some((line) => line.includes('dropPointer(')), '要摘指针')
+  assert.ok(body.some((line) => line.includes('dropCognitions(')), '要摘指针（纯逻辑在 lib/batchDelete.js）')
+  assert.ok(body.some((line) => line.includes('pointers: snapshot.pt')), '指针必须取自快照（传错数组＝静默删不掉）')
+  assert.ok(body.some((line) => line.includes('writebackBusyReason(')), '写回在跑时要让路')
   assert.ok(!body.some((line) => line.includes('dropClaim(')), '不许顺手删命题')
   assert.ok(!body.some((line) => line.includes('snapshot.c =')), '不许动命题表')
   assert.ok(body.some((line) => line.includes('saveSnapshot(')), '要落盘')
@@ -410,11 +413,12 @@ test('delete-cognition：只摘指针，绝不删命题', () => {
 
 // 坑：删掉某条命题的**最后一条**指针，命题就成了"零指针孤儿"，
 // 下一轮结算 `pruneOrphanClaims` 会把它悄悄摘掉（豁免只给本轮新建的）。
-// 面板上写的是「命题本身不动」——那就必须在这里拦住，让玩家改用命题行的 🗑。
+// 面板上写的是「命题本身不动」——那就必须拦住，让玩家改用命题行的 🗑。
+// 「只剩一条就跳过」的判定在 lib/batchDelete.js，由 batchDelete.test 覆盖；这里只钉接线。
 test('delete-cognition：最后一条认知要拒绝，并指向"删命题"', () => {
   const body = handleBody('delete-cognition')
-  assert.ok(body.some((line) => /pointersTo\(snapshot\.pt,\s*(claimId|id)\)/.test(line)), '要先数这条命题还剩几条认知')
-  assert.ok(body.some((line) => /<=\s*1/.test(line)), '只剩一条时要拒绝')
+  assert.ok(body.some((line) => line.includes('dropCognitions(')), '最后一条的判定交给纯逻辑统一负责')
+  assert.ok(body.some((line) => line.includes('skipped.length')), '被跳过时要单独回一句')
   assert.ok(body.some((line) => line.includes('孤儿')), '理由里要说清"下一轮会被当孤儿命题清掉"')
 })
 
@@ -575,6 +579,35 @@ test('补写：面板上有「补写这一轮」按钮，并调这个 handle', a
   assert.ok(client.includes('补写这一轮'), '按钮文字要对玩家说得清')
   assert.ok(client.includes('/retry-writeback'), '要调这个 handle')
   assert.ok(client.includes('补写中'), '要有个「正在补」的状态，别让人以为点没反应')
+})
+
+// ── 批量删除（ADR 0112）──
+test('批量删除：两个 handle 都只落盘一次，并复用纯逻辑', () => {
+  for (const handle of ['delete-claims', 'delete-cognitions']) {
+    const at = source.indexOf(`ctx.tavern.handle('character-archives/${handle}'`)
+    assert.ok(at >= 0, `要注册 ${handle}`)
+    const next = source.indexOf('\n  ctx.tavern.handle(', at + 10)
+    const block = source.slice(at, next > at ? next : at + 3000)
+    assert.ok(block.includes('saveSnapshot('), `${handle} 要落盘`)
+    assert.equal((block.match(/saveSnapshot\(/g) || []).length, 1, `${handle} 只该落盘一次（批量不能逐条写）`)
+    assert.ok(!/for\s*\([^)]*\)\s*\{[^}]*saveSnapshot\(/.test(block), `${handle} 不许把落盘塞进循环（文本只出现一次也照样是 N 次写盘）`)
+    assert.ok(block.includes('pointers: snapshot.pt'), `${handle} 的指针必须取自快照（传错数组＝静默删不掉）`)
+    assert.ok(block.includes('writebackBusyReason('), `${handle} 在写回进行中要让路（同轮双写会吞掉删除）`)
+  }
+  // 单条与批量必须走同一套纯逻辑，别养两套规则
+  assert.match(source, /dropClaims\(\{[\s\S]{0,160}?ids: \[id\]/, '单条删命题要复用 dropClaims')
+  assert.match(source, /dropCognitions\(\{[\s\S]{0,200}?ids: \[id\]/, '单条删认知要复用 dropCognitions')
+  assert.ok(source.includes("from './lib/batchDelete.js'"), '批量删除逻辑要从 lib/batchDelete.js 导入')
+})
+
+test('批量删除：面板有多选开关、勾选框与两个批量按钮', () => {
+  const client = readFileSync(fileURLToPath(new URL('../plugin/client.js', import.meta.url)), 'utf8')
+  assert.ok(client.includes('多选'), '要有「多选」开关')
+  assert.ok(client.includes('delete-claims'), '命题批量删要调 delete-claims')
+  assert.ok(client.includes('delete-cognitions'), '认知批量删要调 delete-cognitions')
+  assert.ok(client.includes("type: 'checkbox'"), '要有勾选框')
+  assert.ok(client.includes('删除选中命题'), '命题批量按钮文案')
+  assert.ok(client.includes('删除选中认知'), '认知批量按钮文案')
 })
 
 test('分叉：订阅 onTimelineChanged，只认 fork，把父局搬给新局', () => {

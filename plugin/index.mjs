@@ -51,6 +51,7 @@ import { claimsOfPerson, filterDeletedPersonActions, pointersOfPerson, splitPers
 import { pruneFutureFlags } from './lib/rollback.js'
 import { inheritGameState } from './lib/forkInherit.js'
 import { retryRefusal, retrySummary } from './lib/retryWriteback.js'
+import { dropCognitions, dropClaims } from './lib/batchDelete.js'
 import { PLAYER_ID, ensurePlayer, isPlayer, isPronounName } from './lib/player.js'
 import { fuzzyLeaveIds, markSeen } from './lib/fuzzy.js'
 import { buildRecallSection } from './lib/recallEngine.js'
@@ -320,6 +321,20 @@ function isWritebackInFlight(gameId, turn) {
   return Boolean(key && writebackInFlight.get(key))
 }
 
+/**
+ * 删除类操作（单条/批量删命题与认知）开工前必须先问这一句。
+ *
+ * 为什么：删除和写回都基于**同一轮的快照**，各自持一份内存副本再整份写回——后写覆盖先写。
+ * 先删后写会让删掉的命题「复活」；先写后删会抹掉写回刚产出的内容（ADR 0112 / 0111）。
+ *
+ * @returns {string} 不能删时给玩家看的一句人话；能删返回空串
+ */
+function writebackBusyReason(gameId, turn) {
+  return isWritebackInFlight(gameId, turn)
+    ? '这一轮的写回正在跑（自动结算或补写），等它结束再删'
+    : ''
+}
+
 /** 通知面板「档案变了」（自动结算与手动补写共用；失败不影响游戏）。 */
 async function publishArchiveChanged(ctx, gameId, data) {
   try {
@@ -421,6 +436,9 @@ async function clearCardPreset(ctx, cardKey) {
   await ctx.tavern.savePluginData({ data })
 }
 export const DATA_VERSION = 1
+
+/** 批量删除一次最多删几条：面板一次传几千个 id 过来时直接拒绝，别让它扫一遍快照。 */
+const MAX_BATCH_DELETE = 200
 
 /**
  * 整局数据的初始形状。这部分不占 64 KB 的按轮快照额度。
@@ -3232,16 +3250,13 @@ export function apply(ctx) {
     const state0 = await loadGameState(ctx.tavern, gameId)
     const turn = await editTurnOf(ctx, gameId, state0)
     if (!turn) return { ok: false, reason: '这一局还没有正文，删不了' }
+    const busyReason = writebackBusyReason(gameId, turn)
+    if (busyReason) return { ok: false, reason: busyReason }
     const { snapshot } = await readSnapshotAt(ctx, gameId, turn)
 
-    // 先把指向它的指针收好：dropClaim 只动命题表，摘完再按 claimId 去指针表里翻也行，
-    // 但先收一份更省事——也能把「摘掉几条」原样报回面板
-    const pointing = pointersTo(snapshot.pt, id)
-    if (!dropClaim(snapshot.c, id)) return { ok: false, reason: '找不到这条命题' }
-    let removedPointers = 0
-    for (const pointer of pointing) {
-      if (dropPointer(snapshot.pt, pointer[0], id)) removedPointers += 1
-    }
+    // 命题与「谁知道它」一起摘（ADR 0112）：纯逻辑在 lib/batchDelete.js，单条与批量共用一套规则
+    const { removedClaims, removedPointers } = dropClaims({ claims: snapshot.c, pointers: snapshot.pt, ids: [id] })
+    if (!removedClaims.length) return { ok: false, reason: '找不到这条命题' }
     // 命题 id 会被复用，留着这个号的冷却会压住将来同号的新命题（见 cooldown.js）
     const state = await loadGameState(ctx.tavern, gameId)
     const cleanedCooldowns = dropClaimCooldowns(state.cooldowns, id)
@@ -3265,29 +3280,107 @@ export function apply(ctx) {
     const state0 = await loadGameState(ctx.tavern, gameId)
     const turn = await editTurnOf(ctx, gameId, state0)
     if (!turn) return { ok: false, reason: '这一局还没有正文，删不了' }
+    const busyReason = writebackBusyReason(gameId, turn)
+    if (busyReason) return { ok: false, reason: busyReason }
     const { snapshot } = await readSnapshotAt(ctx, gameId, turn)
 
-    // 最后一条认知不能在这儿删：零指针的命题是"孤儿"，下一轮结算会被
-    // `pruneOrphanClaims` 悄悄摘掉（豁免只给本轮新建的命题），而面板承诺的是
-    // 「命题本身不动」。要连命题一起删，请走命题行的 🗑（delete-claim）。
-    const remaining = pointersTo(snapshot.pt, id)
-    if (remaining.length <= 1) {
+    // 指针里存的是快照里那份编号；面板传过来的写法/类型未必一样（数字、字符串都可能）。
+    // 先按字符串找回快照里那个人，再把它**原本**的编号交给纯逻辑（它比的是严格相等）
+    const owner = (snapshot.p ?? []).find(
+      (item) => Array.isArray(item) && String(item[0]) === String(personId),
+    )
+    const ownerId = owner ? owner[0] : personId
+    // 最后一条认知不能在这儿删：删了会变「零指针」的孤儿命题，下一轮被 pruneOrphanClaims 清掉，
+    // 而面板承诺「命题本身不动」。这条规则由 lib/batchDelete.js 统一判（单条/批量同一套）
+    const { removed, skipped } = dropCognitions({ pointers: snapshot.pt, personId: ownerId, ids: [id] })
+    if (skipped.length) {
       return {
         ok: false,
         reason: '这是这条命题的最后一条认知：删掉它这条命题就没人知道了，下一轮会被当孤儿命题清掉。要删请用命题行的 🗑（会连命题一起删）。',
       }
     }
-
-    // 指针里存的是快照里那份编号；面板传过来的写法/类型未必一样（数字、字符串都可能）。
-    // 先按字符串找回快照里那个人，再把它**原本**的编号交给 dropPointer（它比的是严格相等）
-    const owner = (snapshot.p ?? []).find(
-      (item) => Array.isArray(item) && String(item[0]) === String(personId),
-    )
-    const gone = dropPointer(snapshot.pt, owner ? owner[0] : personId, id)
-    if (!gone) return { ok: false, reason: '没有这条认知' }
+    if (!removed.length) return { ok: false, reason: '没有这条认知' }
 
     await saveSnapshot(ctx, { gameId, turn, snapshot, textVersion: await currentTextVersion(ctx, gameId, turn) })
     return { ok: true }
+  })
+
+  // ── 批量删命题（面板「多选」→ 删除选中命题）──
+  // 一次读快照、一次落盘（ADR 0112）：逐条调单条接口会写 N 次文件、N 次指针，
+  // 中途失败还会留下「删了一半」的中间态。
+  ctx.tavern.handle('character-archives/delete-claims', async ({ gameId, claimIds } = {}) => {
+    if (!gameId) return { ok: false, reason: '没有打开的对局' }
+    const ids = Array.isArray(claimIds) ? claimIds : []
+    if (!ids.length) return { ok: false, reason: '没选中任何命题' }
+    if (ids.length > MAX_BATCH_DELETE) return { ok: false, reason: `一次最多删 ${MAX_BATCH_DELETE} 条` }
+    const state0 = await loadGameState(ctx.tavern, gameId)
+    const turn = await editTurnOf(ctx, gameId, state0)
+    if (!turn) return { ok: false, reason: '这一局还没有正文，删不了' }
+    const busyReason = writebackBusyReason(gameId, turn)
+    if (busyReason) return { ok: false, reason: busyReason }
+    const { snapshot } = await readSnapshotAt(ctx, gameId, turn)
+
+    const { removedClaims, removedPointers } = dropClaims({ claims: snapshot.c, pointers: snapshot.pt, ids })
+    if (!removedClaims.length) return { ok: false, reason: '一条都没找到（可能已经被删过）' }
+
+    // 冷却按删掉的每个命题号各清一次，再统一落盘
+    const state = await loadGameState(ctx.tavern, gameId)
+    let cooldowns = state.cooldowns ?? {}
+    for (const claimId of removedClaims) cooldowns = dropClaimCooldowns(cooldowns, claimId)
+    if (Object.keys(cooldowns).length !== Object.keys(state.cooldowns ?? {}).length) {
+      state.cooldowns = cooldowns
+      await saveGameState(ctx, gameId, state)
+    }
+
+    await saveSnapshot(ctx, { gameId, turn, snapshot, textVersion: await currentTextVersion(ctx, gameId, turn) })
+    return {
+      ok: true,
+      removed: removedClaims.length,
+      removedPointers,
+      missing: ids.length - removedClaims.length,
+    }
+  })
+
+  // ── 批量删认知（面板「多选」→ 删除选中认知）──
+  // 只摘指针、绝不删命题；会被摘成「零指针」的那几条跳过并在回执里说清楚（ADR 0112）
+  ctx.tavern.handle('character-archives/delete-cognitions', async ({ gameId, personId, claimIds } = {}) => {
+    if (!gameId) return { ok: false, reason: '没有打开的对局' }
+    if (typeof personId !== 'string' || !personId) return { ok: false, reason: '没指定人物' }
+    const ids = Array.isArray(claimIds) ? claimIds : []
+    if (!ids.length) return { ok: false, reason: '没选中任何认知' }
+    if (ids.length > MAX_BATCH_DELETE) return { ok: false, reason: `一次最多删 ${MAX_BATCH_DELETE} 条` }
+    const state0 = await loadGameState(ctx.tavern, gameId)
+    const turn = await editTurnOf(ctx, gameId, state0)
+    if (!turn) return { ok: false, reason: '这一局还没有正文，删不了' }
+    const busyReason = writebackBusyReason(gameId, turn)
+    if (busyReason) return { ok: false, reason: busyReason }
+    const { snapshot } = await readSnapshotAt(ctx, gameId, turn)
+
+    const owner = (snapshot.p ?? []).find(
+      (item) => Array.isArray(item) && String(item[0]) === String(personId),
+    )
+    const { removed, skipped } = dropCognitions({
+      pointers: snapshot.pt,
+      personId: owner ? owner[0] : personId,
+      ids,
+    })
+    const missing = ids.length - removed.length - skipped.length
+    if (!removed.length && !skipped.length) return { ok: false, reason: '一条都没找到（可能已经被删过）' }
+
+    // 真的摘掉了指针才落盘：全是「跳过」时内容一个字没变，别白写一次快照
+    if (removed.length) {
+      await saveSnapshot(ctx, { gameId, turn, snapshot, textVersion: await currentTextVersion(ctx, gameId, turn) })
+    }
+    return {
+      ok: true,
+      removed: removed.length,
+      skipped: skipped.length,
+      skippedIds: skipped.map((item) => item.claimId),
+      missing,
+      reason: skipped.length
+        ? `删了 ${removed.length} 条；另有 ${skipped.length} 条是「最后一条认知」，删了会变孤儿命题，已跳过（要连命题一起删，请用命题行的 🗑）${missing > 0 ? `；还有 ${missing} 条已经不存在` : ''}`
+        : (missing > 0 ? `删了 ${removed.length} 条；还有 ${missing} 条已经不存在` : ''),
+    }
   })
 
   // ── 手动冷档（面板把人拖进「冷档」）──
