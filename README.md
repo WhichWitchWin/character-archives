@@ -214,10 +214,10 @@ scripts/           开发脚本（装到酒馆、同步提示词副本）
 
 ## 状态
 
-**版本 `0.1.2`**，已发布，安装包见 [Releases](https://github.com/WhichWitchWin/character-archives/releases)。
+**版本 `0.1.3`**，已发布，安装包见 [Releases](https://github.com/WhichWitchWin/character-archives/releases)。
 
-- **能跑**：建档、自动结算、召回注入、面板增删改查、栏目预设、三段提示词编辑、导出导入、设置页、**手动补写**（自动写入没写进去时，点一下把最新一轮再写一次）
-- **测试**：851 个用例全过（`npm test`），CI 在 Linux 上同样跑一遍
+- **能跑**：建档、自动结算、召回注入、面板增删改查、栏目预设、三段提示词编辑、导出导入、设置页、**手动补写**（自动写入没写进去时，点一下把最新一轮再写一次）、**批量删命题/认知**（多选 + 全选 + Shift 连选）
+- **测试**：867 个用例全过（`npm test`），CI 在 Linux 上同样跑一遍
 - **零运行时依赖**：`plugin/` 里没有 `dependencies`
 - **还没做**：跨插件接口、同名不同人、栏目预设单独导入导出、非 MVU 卡的游戏内时间
 
