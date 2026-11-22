@@ -697,6 +697,17 @@ test('锁定接线：值锁按当前快照过滤 + 删命题时同步清锁', ()
   assert.ok(hides >= 4, `值眼也要跟着清，实际 ${hides} 处`)
 })
 
+test('召回接线：快照要按「已结算轮」读，不能按宿主传的 turn', () => {
+  // turnSection 的 turn 是「即将生成的这一轮」——那一刻它还没有快照，
+  // 按它读每轮都 bootstrapped → 召回整段静默返回空（2026-11-22 实测：新会话 34 条日志里 recall 一条都没有）
+  const at = source.indexOf('ctx.tavern.turnSection({')
+  assert.ok(at >= 0, '找不到 turnSection')
+  const block = source.slice(at, at + 7000)
+  assert.ok(block.includes('settledTurn'), '要按整局数据里的 updatedTurn 读')
+  assert.ok(!block.includes('readSnapshotAt(ctx, gameId, turn)'), '不许直接按宿主的 turn 读快照')
+  assert.ok(block.includes('召回跳过'), '跳过时要留日志，别再静默')
+})
+
 test('召回接线：模板必须在 turnSection 自己作用域里读，不能借别处的变量', () => {
   // 2026-11-22 实测：`template: templates.recall` 里的 templates 只在 runWriteback() 里声明，
   // 于是自动召回每轮 ReferenceError、被外层 catch 吞掉 → 召回从来没成功过，而没人看得出来

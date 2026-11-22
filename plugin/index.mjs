@@ -1732,8 +1732,20 @@ export function apply(ctx) {
       try {
         activeGameId = String(gameId ?? '')
         const state = await loadGameState(ctx.tavern, gameId)
-        const parsed = await readSnapshotAt(ctx, gameId, turn)
-        if (parsed.bootstrapped) return ''
+        // 读「最近一次**已结算**」的快照，不能按宿主传的 `turn` 读：
+        // turnSection 的 turn 是「**即将生成**的这一轮」（宿主注释：computed once while the turn is prepared），
+        // 那一刻这一轮还没有任何插件数据 → 按它读几乎每轮都 bootstrapped → 召回整段静默返回空。
+        // 2026-11-22 实测：新会话 34 条日志里 recall 一条都没有，就是卡在这儿。
+        const settledTurn = Number.isInteger(state.meta?.updatedTurn) ? state.meta.updatedTurn : 0
+        if (settledTurn < 1) {
+          pushDebug(state, 'info', '召回跳过：这一局还没结算过', { turn })
+          return ''
+        }
+        const parsed = await readSnapshotAt(ctx, gameId, settledTurn)
+        if (parsed.bootstrapped) {
+          pushDebug(state, 'warn', '召回跳过：这一轮还没有快照', { turn, settledTurn })
+          return ''
+        }
         const snapshot = parsed.snapshot
         const settings = resolveSettings(await readScopedSettings(ctx, state))
         const identity = await readIdentity(ctx, String(state.meta?.cardKey ?? gameId))
