@@ -44,5 +44,17 @@ export function pruneFutureFlags({ flags = {}, turn = null } = {}) {
     delete next.playerBack
   }
 
+  // 手动豁免标记（ADR 0118）：值是「打标记时的轮次」。回退之后，未来的标记指向的指针
+  // 已经不存在；而命题号是「最大 +1」会复用，残留标记会让一条本该冷却的新认知被误豁免。
+  // 老数据可能存的是布尔值（没有轮次信息）——认不出来就留着，宁可多豁免一次也不误删。
+  const free = source.manualFree
+  if (free && typeof free === 'object') {
+    const kept = {}
+    for (const [key, at] of Object.entries(free)) {
+      if (typeof at !== 'number' || at <= turn) kept[key] = at
+    }
+    next.manualFree = kept
+  }
+
   return next
 }

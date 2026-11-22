@@ -39,3 +39,17 @@ test('回退清理：不修改原对象', () => {
   assert.deepEqual(flags.seen, { p1: 9 }, '原对象不许被改')
   assert.notEqual(next, flags)
 })
+
+// 手动豁免标记带轮次（ADR 0118）：回退到第 5 轮后，第 12 轮打的标记指向的
+// 「第 12 轮那条指针」已经不存在；而命题号是「最大 +1」会复用，残留标记会让
+// 一条本该冷却的新认知被误豁免一次。
+test('回退清理：未来打的手动豁免标记要丢掉', () => {
+  const flags = { manualFree: { 'pt:p1:9': 12, 'pt:p1:3': 4 } }
+  const next = pruneFutureFlags({ flags, turn: 5 })
+  assert.deepEqual(Object.keys(next.manualFree), ['pt:p1:3'], '只留当前轮及以前的')
+})
+
+test('回退清理：豁免标记是旧的布尔值（没带轮次）时也留着', () => {
+  const flags = { manualFree: { 'pt:p1:9': true } }
+  assert.deepEqual(pruneFutureFlags({ flags, turn: 5 }).manualFree, { 'pt:p1:9': true })
+})

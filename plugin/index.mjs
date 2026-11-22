@@ -58,7 +58,7 @@ import { PLAYER_ID, ensurePlayer, isPlayer, isPronounName } from './lib/player.j
 import { fuzzyLeaveIds, markSeen } from './lib/fuzzy.js'
 import { buildRecallSection } from './lib/recallEngine.js'
 import { buildPendingRecallText, normalizeLevel, queryPerson } from './lib/recallQuery.js'
-import { dropClaimCooldowns, pointerKey, pruneExpired } from './lib/cooldown.js'
+import { dropClaimCooldowns, dropClaimManualFree, dropPersonManualFree, dropPointerManualFree, dropPointersManualFree, markManualFree, pointerKey, pruneExpired } from './lib/cooldown.js'
 import { DEFAULT_TEMPLATES, PLACEHOLDERS, fillTemplate, resolveTemplates } from './lib/promptTemplates.js'
 import { buildPresetDefinitions } from './lib/presets.js'
 import { buildPanelView, DORMANT_TURNS } from './lib/panelView.js'
@@ -472,7 +472,7 @@ export function createGameState() {
     // 放整局数据而不是快照：每条约 50 字节，2000 份快照各带一份会撑爆 8 MB 上限。
     // 新局先落一份「通用预设」的 8 条；形象包由设置项决定，默认不开（§8.8）。
     entries: buildPresetDefinitions().definitions,
-    flags: { status: {}, lock: {}, hidden: {}, left: {}, seen: {}, draft: {}, lastHits: {} },
+    flags: { status: {}, lock: {}, hidden: {}, left: {}, seen: {}, draft: {}, lastHits: {}, manualFree: {} },
     snapshots: { index: [] },
     nextId: 1,                // 人物编号计数器（ADR 0004：号码永不复用）
     cooldowns: {},            // 召回冷却（§7.5）
@@ -594,6 +594,31 @@ async function editTurnOf(ctx, gameId, state) {
 
 /** 调试日志最多留多少条。 */
 const DEBUG_LOG_MAX = 200
+
+/**
+ * 指向某条命题的所有指针（ADR 0118）。
+ * 改命题**内容或索引词**时，念出来的字变了，所有知道它的人都该下一轮就能被念到。
+ */
+function pointersToClaim(snapshot, claimId) {
+  const id = Number(claimId)
+  return (snapshot?.pt ?? []).filter((pointer) => Array.isArray(pointer) && pointer[1] === id)
+}
+
+/**
+ * 给这几条指针挂上「手动改过、豁免一次冷却」的标记并落盘（ADR 0118）。
+ *
+ * **进去重新读一次整局数据再改**：调用方手里的 `state` 可能是几秒前读的，
+ * 整份写回去会盖掉这期间别人（比如自动写回）写进去的东西——那就变成
+ * 「玩家改了、标记却被冲掉」，正是这条功能要解决的病（2026-11-22 评审抓到）。
+ */
+async function saveManualFree(ctx, gameId, pointers, turn) {
+  const list = (pointers ?? []).filter(Boolean)
+  if (!list.length) return
+  const fresh = await loadGameState(ctx, gameId)
+  fresh.flags = fresh.flags ?? {}
+  fresh.flags.manualFree = markManualFree(fresh.flags.manualFree, list, turn)
+  await saveGameState(ctx, gameId, fresh)
+}
 
 /**
  * 往调试日志里塞一条。
@@ -1410,6 +1435,9 @@ async function runWriteback(ctx, state, { gameId, turn, text, textVersion, setti
       const nameOfId = (id) => String(snapshot.p.find((person) => person?.[0] === id)?.[2] ?? id ?? '?')
       // 命题 id 会被复用：连带清掉这次被清掉的命题的冷却（见 cooldown.js 的 dropClaimCooldowns）
       for (const item of retraction.applied) {
+        // 撤回的是「某人知道这件事」这条指针：它的豁免标记跟着清，不管命题留没留（ADR 0118）
+        state.flags = state.flags ?? {}
+        state.flags.manualFree = dropPointerManualFree(state.flags.manualFree, item.personId, item.claimId)
         if (!item.droppedClaim) continue
         state.cooldowns = dropClaimCooldowns(state.cooldowns, item.claimId)
         // 命题 id 会被复用（nextClaimId = 最大+1），锁也得跟着清，否则新命题会继承旧号的锁（ADR 0113）
@@ -1419,6 +1447,8 @@ async function runWriteback(ctx, state, { gameId, turn, text, textVersion, setti
         state.flags = state.flags ?? {}
         state.flags.lockClaims = bucket
         state.flags.hiddenClaims = hideBucket
+        // 手动豁免标记同理（ADR 0118）
+        state.flags.manualFree = dropClaimManualFree(state.flags.manualFree, item.claimId)
       }
       pushDebug(state, 'info', `撤回 ${retraction.applied.length} 条认知`, {
         // 谁 → 关于谁 · 命题内容：命题说的是谁由程序按序号查（ADR 0106），
@@ -1491,9 +1521,12 @@ async function runWriteback(ctx, state, { gameId, turn, text, textVersion, setti
     {
       const { bucket } = dropClaimLocks(state.flags?.lockClaims, orphans.removed)
       const { bucket: hideBucket } = dropClaimHides(state.flags?.hiddenClaims, orphans.removed)
+      let freeBucket = state.flags?.manualFree
+      for (const claimId of orphans.removed) freeBucket = dropClaimManualFree(freeBucket, claimId)
       state.flags = state.flags ?? {}
       state.flags.lockClaims = bucket
       state.flags.hiddenClaims = hideBucket
+      state.flags.manualFree = freeBucket
     }
     pushDebug(state, 'info', `孤儿命题清掉 ${orphans.removed.length} 条`, { id: orphans.removed.slice(0, 10) })
   }
@@ -1770,6 +1803,9 @@ export function apply(ctx) {
           ...recallEyeSets(state.flags, snapshot),
           starIds: new Set(Object.keys(state.flags?.star ?? {}).filter((id) => state.flags.star[id])),
           cooldowns: state.cooldowns ?? {},
+          // 手动改过的那条豁免一次冷却（ADR 0118）。哪些真用掉了、哪些已经没用，
+          // 引擎会在下面按「有没有真进提示词」报回来。
+          manualFree: state.flags?.manualFree ?? {},
           cooldownTurns: settings.recall?.cooldownOn ? settings.recall?.cooldownTurns : 0,
           budget: settings.recall?.budgetChars,
           playerBack: state.flags?.playerBack ?? null,
@@ -1794,12 +1830,13 @@ export function apply(ctx) {
               snapshot,
               pending,
               cooldowns: state.cooldowns ?? {},
+              manualFree: state.flags?.manualFree ?? {},
               cooldownTurns: settings.recall?.cooldownOn ? settings.recall?.cooldownTurns : 0,
               turn,
               skip: givenKeys,
               cognition: settings.cognition,
             })
-          : { text: '', stamps: [], done: [] }
+          : { text: '', stamps: [], done: [], manualFreeUsed: [], manualFreeStale: [] }
 
         // 一次保存搞定所有盖章（自动召回 + 主角回场 + 手动召回），别写几遍盘。
         // 顺带清掉已到期的记录：冷却表只进不出会一直涨（`pruneExpired` 之前从没被调用过）。
@@ -1812,6 +1849,21 @@ export function apply(ctx) {
           for (const pointer of list) {
             cooldownWrite[pointerKey(pointer[0], pointer[1])] = { lastTurn: turn, until: turn + turnsForStamp }
           }
+        }
+
+        // 手动豁免标记（ADR 0118）：真用掉的删、已经没用的也删，跟冷却同一笔落盘（别为删几个键再写一次盘）
+        const freeDrop = [
+          ...(result.manualFreeUsed ?? []),
+          ...(result.manualFreeStale ?? []),
+          ...(manual.manualFreeUsed ?? []),
+          ...(manual.manualFreeStale ?? []),
+        ]
+        if (freeDrop.length) {
+          const nextFree = { ...(state.flags?.manualFree ?? {}) }
+          for (const key of freeDrop) delete nextFree[key]
+          state.flags = state.flags ?? {}
+          state.flags.manualFree = nextFree
+          dirty = true
         }
 
         // 自动召回（含主角回场段）：给出去的就盖召回章——「刚念叨过的人歇几轮」（2026-11-05 补）
@@ -1976,6 +2028,11 @@ export function apply(ctx) {
         snapshot: { v: SNAPSHOT_VERSION, t: turn, gt: plan.gt ?? '', p: plan.persons ?? [] },
         textVersion,
       })
+      // 整份换档案：命题号全变了，旧冷却与旧豁免标记都指向不存在的号，
+      // 留着只会让新档案里的同号认知被无故压住/误豁免（ADR 0118）
+      state.cooldowns = {}
+      state.flags = state.flags ?? {}
+      state.flags.manualFree = {}
       delete state.pendingImport
     }
 
@@ -2326,10 +2383,21 @@ export function apply(ctx) {
     const goneClaimIds = goneClaims.map((claim) => claim?.[0])
     const { bucket: lockBucket, dropped: locksDropped } = dropClaimLocks(state.flags?.lockClaims, goneClaimIds)
     const { bucket: hideBucket, dropped: hidesDropped } = dropClaimHides(state.flags?.hiddenClaims, goneClaimIds)
-    if (locksDropped || hidesDropped) {
+    // 手动豁免标记（ADR 0118）：这个人自己的、以及指向被摘掉的命题的，一起清
+    let freeBucket = state.flags?.manualFree
+    for (const person of removed) freeBucket = dropPersonManualFree(freeBucket, person?.[0])
+    for (const claimId of goneClaimIds) freeBucket = dropClaimManualFree(freeBucket, claimId)
+    const freeDropped = Object.keys(freeBucket ?? {}).length !== Object.keys(state.flags?.manualFree ?? {}).length
+    // 冷却也要清：删人连带摘掉的命题号会被复用，留着旧号的冷却会压住将来同号的新命题（同 dropClaimCooldowns 的注释）
+    let cooldowns = state.cooldowns ?? {}
+    for (const claimId of goneClaimIds) cooldowns = dropClaimCooldowns(cooldowns, claimId)
+    const cooldownsDropped = Object.keys(cooldowns).length !== Object.keys(state.cooldowns ?? {}).length
+    if (locksDropped || hidesDropped || freeDropped || cooldownsDropped) {
+      state.cooldowns = cooldowns
       state.flags = state.flags ?? {}
       state.flags.lockClaims = lockBucket
       state.flags.hiddenClaims = hideBucket
+      state.flags.manualFree = freeBucket
       await saveGameState(ctx, gameId, state)
     }
 
@@ -3238,6 +3306,11 @@ export function apply(ctx) {
       }
     }
 
+    // 没变就不算「改过」（ADR 0118）：不打豁免标记，也不白写一次盘
+    const beforeState = Number.isInteger(group?.[0]) ? group[0] : 2
+    const beforeSource = group?.[1] ?? ''
+    if (nextState === beforeState && nextSource === beforeSource) return { ok: true, unchanged: true }
+
     const nextGroup = [nextState, nextSource]
     if (typeof group?.[2] === 'string' && group[2].trim()) nextGroup.push(group[2])
     else if (Number.isInteger(group?.[3])) nextGroup.push('')
@@ -3247,6 +3320,8 @@ export function apply(ctx) {
     pointer[3] = turn
 
     await saveSnapshot(ctx, { gameId, turn, snapshot, textVersion: await currentTextVersion(ctx, gameId, turn) })
+    // 手动改的态度／来源：这一条认知下一轮就该能念（ADR 0118）
+    await saveManualFree(ctx, gameId, [pointer], turn)
     return { ok: true }
   })
 
@@ -3264,8 +3339,13 @@ export function apply(ctx) {
     const checked = checkText(String(text ?? '').trim(), '值', { max: 30 })
     if (!checked.ok) return { ok: false, reason: checked.reason }
 
-    claim[3] = String(text).trim()
+    const nextText = String(text).trim()
+    // 改成一样的不算「改过」（ADR 0118）：不打豁免标记，也不白写一次盘
+    if (String(claim[3] ?? '') === nextText) return { ok: true, unchanged: true }
+    claim[3] = nextText
     await saveSnapshot(ctx, { gameId, turn, snapshot, textVersion: await currentTextVersion(ctx, gameId, turn) })
+    // 内容变了：所有指着它的指针下一轮都该能念（ADR 0118）
+    await saveManualFree(ctx, gameId, pointersToClaim(snapshot, claim[0]), turn)
     return { ok: true }
   })
 
@@ -3331,10 +3411,19 @@ export function apply(ctx) {
       return { ok: false, reason: `这些词不是这条内容的原文片段（或超过 10 字）：${dropped.join('、')}` }
     }
 
+    const nextClaim = withClaimWords(claim, cleaned)
+    // 改成一样的不算「改过」（ADR 0118）。**只比词**：面板重建的词类别是 `null`，
+    // 按整个对象比会把「词没变」误判成变了，还顺手把原类别抹掉（2026-11-22 评审抓到）
+    const wordText = (list) => (list ?? []).map((one) => String(one?.词 ?? '')).join('\u0000')
+    if (wordText(wordsOfClaim(claim)) === wordText(wordsOfClaim(nextClaim))) {
+      return { ok: true, words: cleaned.map((one) => one.词), unchanged: true }
+    }
     snapshot.c = (snapshot.c ?? []).map((item) =>
-      Array.isArray(item) && item[0] === Number(claimId) ? withClaimWords(item, cleaned) : item,
+      Array.isArray(item) && item[0] === Number(claimId) ? nextClaim : item,
     )
     await saveSnapshot(ctx, { gameId, turn, snapshot, textVersion: await currentTextVersion(ctx, gameId, turn) })
+    // 索引词是这条命题共用的：所有指着它的指针下一轮都该能念（ADR 0118）
+    await saveManualFree(ctx, gameId, pointersToClaim(snapshot, claim[0]), turn)
     return { ok: true, words: cleaned.map((one) => one.词) }
   })
 
@@ -3380,6 +3469,8 @@ export function apply(ctx) {
     if (pointer && !hasSelf(pointer)) setEntry(pointer, { state: PTRUTH.TRUE })
 
     await saveSnapshot(ctx, { gameId, turn, snapshot, textVersion: await currentTextVersion(ctx, gameId, turn) })
+    // 手动建的这条下一轮就该能念（ADR 0118）：新建指针天生带着「本轮刚变」的冷却章
+    await saveManualFree(ctx, gameId, [pointer], turn)
     return { ok: true, claimId: claim[0] }
   })
 
@@ -3409,11 +3500,14 @@ export function apply(ctx) {
     // 命题 id 会被复用，锁也要跟着清（ADR 0113）——不清的话新命题会继承旧号的锁
     const { bucket: lockBucket, dropped: locksDropped } = dropClaimLocks(state.flags?.lockClaims, [id])
     const { bucket: hideBucket, dropped: hidesDropped } = dropClaimHides(state.flags?.hiddenClaims, [id])
-    if (cooldownChanged || locksDropped || hidesDropped) {
+    const freeBucket = dropClaimManualFree(state.flags?.manualFree, id)
+    const freeDropped = Object.keys(freeBucket).length !== Object.keys(state.flags?.manualFree ?? {}).length
+    if (cooldownChanged || locksDropped || hidesDropped || freeDropped) {
       state.cooldowns = cleanedCooldowns
       state.flags = state.flags ?? {}
       state.flags.lockClaims = lockBucket
       state.flags.hiddenClaims = hideBucket
+      state.flags.manualFree = freeBucket
       await saveGameState(ctx, gameId, state)
     }
 
@@ -3471,6 +3565,8 @@ export function apply(ctx) {
     if (!hasSelf(pointer)) setEntry(pointer, { state: PTRUTH.UNKNOWN })
 
     await saveSnapshot(ctx, { gameId, turn, snapshot, textVersion: await currentTextVersion(ctx, gameId, turn) })
+    // 手动补的这条指针下一轮就该能念（ADR 0118）
+    await saveManualFree(ctx, gameId, [pointer], turn)
     return { ok: true, claimId: Number(claimId) }
   })
 
@@ -3504,6 +3600,13 @@ export function apply(ctx) {
     if (!removed.length) return { ok: false, reason: '没有这条认知' }
 
     await saveSnapshot(ctx, { gameId, turn, snapshot, textVersion: await currentTextVersion(ctx, gameId, turn) })
+    // 这条认知没了，它的豁免标记跟着清（ADR 0118）
+    const freeBucket = dropPointerManualFree(state0.flags?.manualFree, ownerId, id)
+    if (Object.keys(freeBucket).length !== Object.keys(state0.flags?.manualFree ?? {}).length) {
+      state0.flags = state0.flags ?? {}
+      state0.flags.manualFree = freeBucket
+      await saveGameState(ctx, gameId, state0)
+    }
     return { ok: true }
   })
 
@@ -3531,11 +3634,15 @@ export function apply(ctx) {
     for (const claimId of removedClaims) cooldowns = dropClaimCooldowns(cooldowns, claimId)
     const { bucket: lockBucket, dropped: locksDropped } = dropClaimLocks(state.flags?.lockClaims, removedClaims)
     const { bucket: hideBucket, dropped: hidesDropped } = dropClaimHides(state.flags?.hiddenClaims, removedClaims)
-    if (Object.keys(cooldowns).length !== Object.keys(state.cooldowns ?? {}).length || locksDropped || hidesDropped) {
+    let freeBucket = state.flags?.manualFree
+    for (const claimId of removedClaims) freeBucket = dropClaimManualFree(freeBucket, claimId)
+    const freeDropped = Object.keys(freeBucket ?? {}).length !== Object.keys(state.flags?.manualFree ?? {}).length
+    if (Object.keys(cooldowns).length !== Object.keys(state.cooldowns ?? {}).length || locksDropped || hidesDropped || freeDropped) {
       state.cooldowns = cooldowns
       state.flags = state.flags ?? {}
       state.flags.lockClaims = lockBucket
       state.flags.hiddenClaims = hideBucket
+      state.flags.manualFree = freeBucket
       await saveGameState(ctx, gameId, state)
     }
 
@@ -3577,6 +3684,14 @@ export function apply(ctx) {
     // 真的摘掉了指针才落盘：全是「跳过」时内容一个字没变，别白写一次快照
     if (removed.length) {
       await saveSnapshot(ctx, { gameId, turn, snapshot, textVersion: await currentTextVersion(ctx, gameId, turn) })
+      // 这些认知没了，豁免标记跟着清（ADR 0118）。
+      // `removed` 是**数字数组**（batchDelete.js 的 dropCognitions 就返回这个形状），别再按 `item.claimId` 取
+      const freeBucket = dropPointersManualFree(state0.flags?.manualFree, owner ? owner[0] : personId, removed)
+      if (Object.keys(freeBucket).length !== Object.keys(state0.flags?.manualFree ?? {}).length) {
+        state0.flags = state0.flags ?? {}
+        state0.flags.manualFree = freeBucket
+        await saveGameState(ctx, gameId, state0)
+      }
     }
     return {
       ok: true,

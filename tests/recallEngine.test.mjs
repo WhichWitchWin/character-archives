@@ -318,3 +318,69 @@ test('条目眼按「谁的指针」判，不按命题主人', () => {
   const { text } = buildRecallSection({ ...base, snapshot, hiddenEntries: new Set(['p1:a']) })
   assert.equal((text.match(/在码头/g) ?? []).length, 1, '只有 p1 那次被闭掉，p2 的照常念')
 })
+
+// ── 手动改过：豁免一次（ADR 0118）──
+//
+// 玩家手动加/改的东西下一轮就该能被念到，不该被冷却压 10 轮。豁免只管**冷却**这一关：
+// 人不在场、栏目没勾、眼睛闭着、预算不够，照旧管得住。
+
+test('手动改过的指针：跳过冷却念出来，并报告「标记用掉了」', () => {
+  const snapshot = {
+    p: [person('p1', 1, '老陈')],
+    c: [claim(1, 'p1', 'a', '在旧港')],
+    pt: [pointer('p1', 1, [[TRUTH.TRUE, SELF]], 10)],   // 第 10 轮刚变过，正常该冷却
+  }
+  const result = buildRecallSection({ ...base, snapshot, turn: 10, cooldownTurns: 10, manualFree: { 'pt:p1:1': true } })
+  assert.ok(result.text.includes('在旧港'), '有豁免标记就该念出来')
+  assert.deepEqual(result.manualFreeUsed, ['pt:p1:1'], '念了要报告，调用方据此删标记')
+  assert.deepEqual(result.manualFreeStale, [])
+})
+
+test('标记白挂：本来就不冷却 → 报告该删，照常念', () => {
+  const snapshot = {
+    p: [person('p1', 1, '老陈')],
+    c: [claim(1, 'p1', 'a', '在旧港')],
+    pt: [pointer('p1', 1, [[TRUTH.TRUE, SELF]], 1)],
+  }
+  // 第 20 轮：距最后变动（第 1 轮）已经 19 轮 > 10，本来就能念
+  const result = buildRecallSection({ ...base, snapshot, turn: 20, cooldownTurns: 10, manualFree: { 'pt:p1:1': true } })
+  assert.ok(result.text.includes('在旧港'))
+  assert.deepEqual(result.manualFreeStale, ['pt:p1:1'])
+  assert.deepEqual(result.manualFreeUsed, [])
+})
+
+test('豁免只管冷却：人不在场照样不给，标记既不算用掉也不算无效（等他回来）', () => {
+  const snapshot = {
+    p: [person('p1', 0, '老陈')],       // 离场
+    c: [claim(1, 'p1', 'a', '在旧港')],
+    pt: [pointer('p1', 1, [[TRUTH.TRUE, SELF]], 10)],
+  }
+  const result = buildRecallSection({ ...base, snapshot, turn: 10, cooldownTurns: 10, manualFree: { 'pt:p1:1': true } })
+  assert.equal(result.text, '')
+  assert.deepEqual(result.manualFreeUsed, [])
+  assert.deepEqual(result.manualFreeStale, [], '不是「无效」，是还没轮到')
+})
+
+test('豁免是那一条指针的：别人记得的同一条照样冷却', () => {
+  const snapshot = {
+    p: [person('p1', 1, '老陈'), person('p2', 1, '李四')],
+    c: [claim(1, 'p1', 'a', '在旧港'), claim(2, 'p2', 'a', '在码头')],
+    pt: [pointer('p1', 1, [[TRUTH.TRUE, SELF]], 10), pointer('p2', 2, [[TRUTH.TRUE, SELF]], 10)],
+  }
+  const result = buildRecallSection({ ...base, snapshot, turn: 10, cooldownTurns: 10, manualFree: { 'pt:p1:1': true } })
+  assert.ok(result.text.includes('在旧港'), '有标记的那条念')
+  assert.ok(!result.text.includes('在码头'), '没标记的那条照样冷却')
+  assert.deepEqual(result.manualFreeUsed, ['pt:p1:1'])
+})
+
+// 预算不够时被砍掉的块：标记不能算"用掉"（那条其实没进提示词，删了就白改）
+test('标记生效但被预算砍掉 → 不算用掉', () => {
+  const snapshot = {
+    p: [person('p1', 1, '老陈')],
+    c: [claim(1, 'p1', 'a', '在旧港')],
+    pt: [pointer('p1', 1, [[TRUTH.TRUE, SELF]], 10)],
+  }
+  const result = buildRecallSection({ ...base, snapshot, turn: 10, cooldownTurns: 10, budget: 10, manualFree: { 'pt:p1:1': true } })
+  assert.equal(result.text, '', '预算太小，整块被砍')
+  assert.deepEqual(result.manualFreeUsed, [], '没进提示词就不算用掉')
+})

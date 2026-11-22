@@ -8,7 +8,7 @@
 // 纯逻辑模块：不 import 酒馆接口、不接触 ctx。
 
 import { resolvePersonByName } from './actions.js'
-import { isPointerCoolingDown, pointerKey } from './cooldown.js'
+import { cooldownGate, isPointerCoolingDown, pointerKey } from './cooldown.js'
 import { TRUTH, SELF, UNKNOWN_SOURCE, visibleGroups } from './pointers.js'
 
 /** 编号优先（面板召回排队存的是编号），退一步才按名字认。 */
@@ -70,6 +70,7 @@ export function queryPerson({
   personId,
   level = 'detailed',
   cooldowns = {},
+  manualFree = null,
   cooldownTurns = 0,
   turn = 0,
   skip = null,
@@ -94,17 +95,46 @@ export function queryPerson({
   for (const claim of claims) if (Array.isArray(claim)) claimById.set(claim[0], claim)
 
   const mine = pointers.filter((pointer) => Array.isArray(pointer) && String(pointer[0]) === foundId)
-  if (!mine.length) return { ok: true, name: personName, level, text: `▍${personName}\n（还没有任何认知）`, pointers: [] }
+  if (!mine.length) {
+    return {
+      ok: true,
+      name: personName,
+      level,
+      text: `▍${personName}\n（还没有任何认知）`,
+      pointers: [],
+      manualFreeUsed: [],
+      manualFreeStale: [],
+    }
+  }
 
   // 全量**恒不看冷却**（显式要全部，给完照样盖章）；
   // 详细/简单**只看冷却外**的——跟自动召回一个口径。
   // `skip` 是「同一轮已经给过的指针」，只在召回路径上用（查询不需要）。
-  const visible = (level === 'full'
-    ? mine
-    : mine.filter((pointer) => !isPointerCoolingDown(cooldowns, pointer, turn, cooldownTurns)))
+  // `manualFree`（ADR 0118）：手动改过的那条豁免一次冷却。传 null ＝ 不参与（查认知那条路不消费标记）。
+  const usedFree = new Set()
+  const staleFree = new Set()
+  const eligible = (pointer) => {
+    if (level === 'full') return true
+    if (!manualFree) return !isPointerCoolingDown(cooldowns, pointer, turn, cooldownTurns)
+    const gate = cooldownGate(cooldowns, manualFree, pointer, turn, cooldownTurns)
+    const key = pointerKey(pointer[0], pointer[1])
+    if (gate.drop) staleFree.add(key)
+    if (gate.consume) usedFree.add(key)
+    return gate.pass
+  }
+  const visible = mine
+    .filter(eligible)
     .filter((pointer) => !(skip instanceof Set) || !skip.has(pointerKey(pointer[0], pointer[1])))
   if (!visible.length) {
-    return { ok: true, name: personName, level, text: `▍${personName}\n（这些认知都在冷却里，想看全部请用「全量」）`, pointers: [] }
+    return {
+      ok: true,
+      name: personName,
+      level,
+      text: `▍${personName}\n（这些认知都在冷却里，想看全部请用「全量」）`,
+      pointers: [],
+      manualFreeUsed: [],
+      manualFreeStale: [...staleFree],
+    }
   }
 
   const lines = [`▍${personName}`]
@@ -122,7 +152,23 @@ export function queryPerson({
     used.push(pointer)
   }
 
-  return { ok: true, name: personName, level, text: lines.join('\n'), pointers: used }
+  // 只有**真进了这段文本**的才算用掉：全量档没经过冷却闸，这里兜一遍；
+  // 被 `skip` 挡掉的、以及没进 used 的，一律不算。
+  const usedKeys = new Set(used.map((pointer) => pointerKey(pointer[0], pointer[1])))
+  for (const pointer of used) {
+    const key = pointerKey(pointer[0], pointer[1])
+    // 已经判为 stale 的（本来就冷却）别重复记成 used——两条都报会让调用方分不清
+    if (manualFree?.[key] && !staleFree.has(key)) usedFree.add(key)
+  }
+  return {
+    ok: true,
+    name: personName,
+    level,
+    text: lines.join('\n'),
+    pointers: used,
+    manualFreeUsed: [...usedFree].filter((key) => usedKeys.has(key)),
+    manualFreeStale: [...staleFree],
+  }
 }
 
 /**
@@ -143,6 +189,7 @@ export function buildPendingRecallText({
   snapshot,
   pending = [],
   cooldowns = {},
+  manualFree = null,
   cooldownTurns = 0,
   turn = 0,
   skip = null,
@@ -152,6 +199,9 @@ export function buildPendingRecallText({
   const blocks = []
   const stamps = []
   const done = []
+  // 手动豁免（ADR 0118）：这条路的输出会真进提示词，所以要消费标记
+  const usedFree = new Set()
+  const staleFree = new Set()
 
   for (const item of Array.isArray(pending) ? pending : []) {
     const id = String(item?.personId ?? '').trim()
@@ -169,17 +219,21 @@ export function buildPendingRecallText({
       personId: id,
       level: normalizeLevel(item?.level, 'detailed'),
       cooldowns,
+      manualFree,
       cooldownTurns,
       turn,
       skip,
       cognition,
     })
+    // 无效的标记不管这次有没有给出内容，都报上去清掉
+    for (const key of result.manualFreeStale ?? []) staleFree.add(key)
     if (!result.ok || !result.pointers.length) continue
     blocks.push(result.text)
     stamps.push(...result.pointers)
+    for (const key of result.manualFreeUsed ?? []) usedFree.add(key)
   }
 
   // 加一句抬头：不然模型分不清「程序按场景挑的」和「玩家点名要它记住的」
   const text = blocks.length ? `【玩家点名要求你记住的】\n\n${blocks.join('\n\n')}` : ''
-  return { text, stamps, done }
+  return { text, stamps, done, manualFreeUsed: [...usedFree], manualFreeStale: [...staleFree] }
 }

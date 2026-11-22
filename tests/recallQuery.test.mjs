@@ -127,3 +127,75 @@ test('手动召回拼出来的文本也用同一个口径', () => {
   assert.ok(!result.text.includes('他自己确认过'), '注入正文时只显示最后一组')
   assert.equal(result.stamps.length, 1, '过滤显示不影响盖章清单')
 })
+
+// ── 手动改过：豁免一次（ADR 0118）——
+// 只有「面板召回」这条路消费标记（它的结果会真进提示词）；「查认知」不传，
+// 它只是给人看一眼，不该把玩家的豁免额度用掉。
+
+const oneSnapshot = {
+  p: [person('p1', 1, '老陈')],
+  c: [claim(1, 'p1', 'a', '在旧港')],
+  pt: [pointer('p1', 1)],   // 最后变动轮 = 3
+}
+
+test('面板召回：冷却中的指针，有豁免标记就能念出来并报「用掉了」', () => {
+  const blocked = queryPerson({ snapshot: oneSnapshot, name: '老陈', turn: 5, cooldownTurns: 10 })
+  assert.equal(blocked.pointers.length, 0, '没有标记时冷却照挡')
+
+  const result = queryPerson({
+    snapshot: oneSnapshot,
+    name: '老陈',
+    turn: 5,
+    cooldownTurns: 10,
+    manualFree: { 'pt:p1:1': 3 },
+  })
+  assert.ok(result.text.includes('在旧港'), '有标记就该念出来')
+  assert.deepEqual(result.manualFreeUsed, ['pt:p1:1'])
+  assert.deepEqual(result.manualFreeStale, [])
+})
+
+test('面板召回：标记白挂（本来不冷却）→ 报 stale', () => {
+  const result = queryPerson({
+    snapshot: oneSnapshot,
+    name: '老陈',
+    turn: 20,
+    cooldownTurns: 10,
+    manualFree: { 'pt:p1:1': 3 },
+  })
+  assert.ok(result.text.includes('在旧港'))
+  assert.deepEqual(result.manualFreeStale, ['pt:p1:1'])
+  assert.deepEqual(result.manualFreeUsed, [])
+})
+
+test('查认知：不传 manualFree 就完全不消费标记', () => {
+  const result = queryPerson({ snapshot: oneSnapshot, name: '老陈', turn: 20, cooldownTurns: 10 })
+  assert.deepEqual(result.manualFreeUsed, [])
+  assert.deepEqual(result.manualFreeStale, [])
+})
+
+test('面板召回：全量档不看冷却，但真给了也算用掉', () => {
+  const result = queryPerson({
+    snapshot: oneSnapshot,
+    name: '老陈',
+    level: 'full',
+    turn: 5,
+    cooldownTurns: 10,
+    manualFree: { 'pt:p1:1': 3 },
+  })
+  assert.ok(result.text.includes('在旧港'), '全量档恒不看冷却')
+  assert.deepEqual(result.manualFreeUsed, ['pt:p1:1'], '给了就算用掉')
+})
+
+test('面板召回：被 skip 挡掉的指针不算用掉（同一轮已经在自动召回里给过了）', () => {
+  const result = queryPerson({
+    snapshot: oneSnapshot,
+    name: '老陈',
+    level: 'full',
+    turn: 5,
+    cooldownTurns: 10,
+    manualFree: { 'pt:p1:1': 3 },
+    skip: new Set(['pt:p1:1']),
+  })
+  assert.equal(result.pointers.length, 0)
+  assert.deepEqual(result.manualFreeUsed, [], '没进文本就不算用掉')
+})

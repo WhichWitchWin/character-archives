@@ -12,7 +12,7 @@
 
 import { STATUS } from './snapshot.js'
 import { isPlayer } from './player.js'
-import { isPointerCoolingDown } from './cooldown.js'
+import { cooldownGate, pointerKey } from './cooldown.js'
 import { TRUTH, SELF, UNKNOWN_SOURCE, visibleGroups } from './pointers.js'
 import { fillTemplate } from './promptTemplates.js'
 import { autoWordsOf } from './indexWords.js'
@@ -109,6 +109,7 @@ export function buildRecallSection({
   hiddenClaims = new Set(),
   starIds = new Set(),
   cooldowns = {},
+  manualFree = {},
   cooldownTurns = 0,
   budget = 3000,
   playerBack = null,
@@ -122,6 +123,9 @@ export function buildRecallSection({
   const conflictDisplay = cognition?.conflictDisplay ?? 'all'
   // 值眼：命题 id 两侧口径统一按字符串比（调用方传数字 Set 也认）
   const hiddenClaimIds = new Set([...hiddenClaims].map((id) => String(id)))
+  // 手动豁免（ADR 0118）的账：这次真念进提示词的、以及已经没用的标记，都报给调用方去清
+  const consumedFree = new Set()
+  const staleFree = new Set()
   const people = Array.isArray(snapshot?.p) ? snapshot.p : []
   const claims = Array.isArray(snapshot?.c) ? snapshot.c : []
   const pointers = Array.isArray(snapshot?.pt) ? snapshot.pt : []
@@ -169,8 +173,13 @@ export function buildRecallSection({
     const definition = definitions?.[code]
     if (!definition) continue
     if (checkedCodes.size && !checkedCodes.has(code)) continue   // 闸 3：栏目被勾选
-    // 闸 4：指针级冷却（建立/修改盖章 + 召回盖章，ADR 0086）
-    if (cooldownTurns > 0 && isPointerCoolingDown(cooldowns, pointer, turn, cooldownTurns)) continue
+    // 闸 4：指针级冷却（建立/修改盖章 + 召回盖章，ADR 0086）。
+    // 手动改过的那一条有一次豁免（ADR 0118）：放行时先记账，确认它真进了提示词再删标记；
+    // 标记已经没用的（本来就不冷却）也记下来，调用方顺手清掉。
+    const gate = cooldownGate(cooldowns, manualFree, pointer, turn, cooldownTurns)
+    if (gate.drop) staleFree.add(pointerKey(pointer[0], pointer[1]))
+    if (!gate.pass) continue
+    if (gate.consume) consumedFree.add(pointerKey(pointer[0], pointer[1]))
 
     const score = scorePointer({ claim, presentIdSet, selfId: personId, loc, text, placeWords })
     const bucket = byPerson.get(personId) ?? []
@@ -286,7 +295,23 @@ export function buildRecallSection({
     }
   }
 
-  if (!blocks.length) return { text: '', used, blocks: [], pointers: [] }
+  // 统一出口：顺手把「豁免标记」的账算清楚（ADR 0118）。
+  // 只有**真正进了注入文本**的指针才算用掉——预算不够被砍掉的不算，删了就等于白改。
+  const pack = (textValue, usedValue, blockList, pointerList) => {
+    const included = new Set(
+      (pointerList ?? []).filter((one) => Array.isArray(one)).map((one) => pointerKey(one[0], one[1])),
+    )
+    return {
+      text: textValue,
+      used: usedValue,
+      blocks: blockList,
+      pointers: pointerList ?? [],
+      manualFreeUsed: [...consumedFree].filter((key) => included.has(key)),
+      manualFreeStale: [...staleFree],
+    }
+  }
+
+  if (!blocks.length) return pack('', used, [], [])
 
   // 召回模板（assets/recall-prompt.txt）：玩家可以在面板里改骨架，
   // 占位符 {{VIEWPOINT}} / {{GT}} / {{LOC}} / {{STAMP}} / {{BLOCKS}}。
@@ -299,7 +324,7 @@ export function buildRecallSection({
       STAMP: stamp,
       BLOCKS: blocks.join('\n\n'),
     })
-    return { text: templated, used: charCount(templated), blocks, pointers: blockPointers.flat() }
+    return pack(templated, charCount(templated), blocks, blockPointers.flat())
   }
 
   // ── 抬头（ADR 0089 §8 重做）──
@@ -318,14 +343,9 @@ export function buildRecallSection({
       keepPointers.pop()
     }
     const trimmed = [...head, '', ...keep].join('\n\n')
-    return {
-      text: keep.length ? trimmed : '',
-      used: charCount(trimmed),
-      blocks: keep,
-      pointers: keep.length ? keepPointers.flat() : [],
-    }
+    return pack(keep.length ? trimmed : '', charCount(trimmed), keep, keep.length ? keepPointers.flat() : [])
   }
-  return { text: text2, used: charCount(text2), blocks, pointers: blockPointers.flat() }
+  return pack(text2, charCount(text2), blocks, blockPointers.flat())
 }
 
 /**

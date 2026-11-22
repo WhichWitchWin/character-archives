@@ -768,3 +768,72 @@ test('眼睛接线：召回集合走纯函数（引用错作用域会让召回�
   assert.ok(client.includes("field: 'hideEntry'"), '栏目行没接 hideEntry')
   assert.equal((client.match(/field: 'hideClaim'/g) ?? []).length, 2, '两个值行都要接 hideClaim')
 })
+
+// ── 手动改过：豁免一次冷却（ADR 0118）──
+//
+// 这条链最容易"静默失效"：漏一处不会报错，玩家只会觉得"我改了、它还是不念"。
+// 所以把五个人工入口、两条注入路径、六处删除全部用源码钉住。
+
+test('豁免接线：五个人工入口都挂标记', () => {
+  for (const handle of ['add-claim', 'add-cognition', 'update-claim', 'update-pointer', 'update-claim-words']) {
+    const at = source.indexOf(`character-archives/${handle}'`)
+    assert.ok(at > 0, `找不到 ${handle}`)
+    assert.ok(source.slice(at, at + 2800).includes('saveManualFree'), `${handle} 没挂豁免标记`)
+  }
+})
+
+test('豁免接线：两条会真注入的路径都传 manualFree，账也都写回', () => {
+  const autoAt = source.indexOf('const result = buildRecallSection({')
+  assert.ok(autoAt > 0, '找不到自动召回调用')
+  assert.ok(source.slice(autoAt, autoAt + 1400).includes('manualFree:'), '自动召回没传 manualFree')
+
+  const pendingAt = source.indexOf('buildPendingRecallText({')
+  assert.ok(pendingAt > 0, '找不到面板召回调用')
+  assert.ok(source.slice(pendingAt, pendingAt + 700).includes('manualFree:'), '面板召回没传 manualFree')
+
+  // 「用掉了」与「没用了」都要写回，否则标记要么永不消失、要么白白压着冷却
+  for (const token of ['result.manualFreeUsed', 'result.manualFreeStale', 'manual.manualFreeUsed', 'manual.manualFreeStale']) {
+    assert.ok(source.includes(token), `召回后没写回 ${token}`)
+  }
+})
+
+test('豁免接线：删除时清标记（命题 / 认知 / 人）', () => {
+  // 改命题内容/索引词要连同指向它的所有指针一起打标记
+  assert.ok(source.includes('pointersToClaim('), '缺 pointersToClaim（改命题要标记所有指向它的指针）')
+  // 命题 id 会复用：清冷却的每一处都要顺手清标记（撤回／孤儿清理／删人／单条删／批量删 = 5 处）
+  const claimDrops = (source.match(/dropClaimManualFree\(/gu) ?? []).length
+  assert.ok(claimDrops >= 5, `清命题标记的点太少（${claimDrops} 处），撤回/孤儿/删人/单条删/批量删都要清`)
+  assert.ok((source.match(/dropPointerManualFree\(/gu) ?? []).length >= 2, '删认知（单条/批量）要清标记')
+  assert.ok((source.match(/dropPersonManualFree\(/gu) ?? []).length >= 1, '删人要清标记')
+})
+
+// 评审（2026-11-22）抓到的三处真问题，逐条钉死，免得再犯
+test('豁免接线：批量删认知按数字数组清标记（不要按 item.claimId 取）', () => {
+  const at = source.indexOf("character-archives/delete-cognitions'")
+  assert.ok(at > 0, '找不到 delete-cognitions')
+  const body = source.slice(at, at + 3400)
+  assert.ok(body.includes('dropPointersManualFree('), '批量删认知没用 dropPointersManualFree')
+  assert.ok(
+    !/for \(const item of removed\)[\s\S]{0,160}item\.claimId/u.test(body),
+    '别按 item.claimId 取：removed 是数字数组，键会变成 pt:p1:undefined、一个都删不掉',
+  )
+})
+
+test('豁免接线：写标记前重新读一次整局数据（防覆盖写回期间的改动）', () => {
+  const at = source.indexOf('async function saveManualFree')
+  assert.ok(at > 0, '找不到 saveManualFree')
+  const end = source.indexOf('\n}', at)
+  const body = source.slice(at, end > at ? end : at + 900)
+  assert.ok(body.includes('loadGameState('), 'saveManualFree 必须重新 load，不能整份写调用方手里那个旧 state')
+  assert.ok(!/saveManualFree\(ctx, gameId, state\b/.test(source), '调用点还在传整个 state')
+})
+
+test('豁免接线：撤回／删人／导入／初值形状四处不能漏', () => {
+  assert.ok(
+    source.includes('dropPointerManualFree(state.flags.manualFree, item.personId, item.claimId)'),
+    '撤回没清那条指针的标记（命题没被删时也要清）',
+  )
+  assert.ok(/goneClaimIds[\s\S]{0,500}dropClaimCooldowns/.test(source), '删人没清冷却（命题号会复用）')
+  assert.ok(source.includes('state.flags.manualFree = {}'), '导入（整份换档案）没清豁免标记')
+  assert.ok(source.includes('lastHits: {}, manualFree: {}'), 'createGameState 的 flags 没声明 manualFree')
+})
