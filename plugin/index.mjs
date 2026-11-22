@@ -1903,19 +1903,12 @@ export function apply(ctx) {
           dirty = true
         }
 
-        if (dirty) {
-          state.cooldowns = cooldownWrite
-          // 存盘失败只影响"下次会不会重复给"，绝不能把这一轮的档案一起丢掉（review 抓到的）
-          try {
-            await saveGameState(ctx, gameId, state)
-          } catch (error) {
-            ctx.tavern.log?.warn?.('人物档案馆：召回盖章没存上', error)
-          }
-        }
-
         const pieces = [result.text, manual.text].filter((piece) => String(piece ?? '').trim())
         // 召回日志（2026-11-14 补）：之前整条链一条调试都没有，「召回一直是空」
-        // 只能靠玩家感觉"模型不记得人"来发现；现在成功与空都能在调试页看到
+        // 只能靠玩家感觉"模型不记得人"来发现；现在成功与空都能在调试页看到。
+        // **必须记在保存之前**：2026-11-22 才发现这些日志从来没落盘——原来它们写在
+        // `saveGameState` 之后，而且没有冷却变化时那次保存压根不发生，于是整局 32 条日志里
+        // 召回类为 0（而酒馆的模型请求里明明带着【人物档案参考】），害得大家以为召回没跑。
         if (result.text) {
           pushDebug(state, 'info', `召回注入 ${result.used ?? 0} 字`, {
             人: new Set(autoPointers.map((pointer) => String(pointer[0]))).size,
@@ -1931,6 +1924,15 @@ export function apply(ctx) {
           pushDebug(state, 'info', `手动召回注入 ${Array.isArray(manual.done) ? manual.done.length : 0} 人`, {
             点名: Array.isArray(manual.done) ? manual.done.slice(0, 10) : null,
           })
+        }
+
+        // 无条件落盘：日志在上面记的，不写下去面板就看不到。
+        // 存盘失败只影响"下次会不会重复给"和这条日志，绝不能影响这一轮的正文注入。
+        state.cooldowns = cooldownWrite
+        try {
+          await saveGameState(ctx, gameId, state)
+        } catch (error) {
+          ctx.tavern.log?.warn?.('人物档案馆：召回账没存上', error)
         }
         return pieces.join('\n\n')
       } catch (error) {

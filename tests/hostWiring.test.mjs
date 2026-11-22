@@ -754,6 +754,22 @@ test('召回接线：成功 / 空 / 失败三条日志都要接进调试面板',
   assert.ok(source.includes("[/召回/, 'recall']"), '召回要能按类型筛出来')
 })
 
+// 召回日志必须**存盘**：`pushDebug` 只是改内存里的 `state.debugLog`，
+// 不跟着 `saveGameState` 写下去，面板上就永远看不到。
+// 2026-11-22 排查「召回不成功」时：整局 32 条日志里召回类 = 0，而酒馆的模型请求里
+// 明明带着【人物档案参考】——日志写在保存之后，且没有冷却变化时压根不保存。
+test('召回日志必须落盘：pushDebug 之后要有 saveGameState', () => {
+  const logAt = source.indexOf('召回注入 ${')
+  assert.ok(logAt > 0, '找不到召回成功日志')
+  // 只看「记日志 → return 注入文本」这一段：别处的 saveGameState 不算
+  const returnAt = source.indexOf('return pieces.join', logAt)
+  assert.ok(returnAt > logAt, '找不到召回注入的收尾（return pieces.join）')
+  assert.ok(
+    source.slice(logAt, returnAt).includes('saveGameState('),
+    '召回日志写完就直接 return 了，没保存 → 面板永远看不到召回记录',
+  )
+})
+
 test('眼睛接线：召回集合走纯函数（引用错作用域会让召回整体静默失效）', () => {
   assert.ok(source.includes('...recallEyeSets(state.flags, snapshot)'), '三层眼要走 recallEyeSets，别在调用处直接拼')
   // 反向守卫：2026-11-14 在 apply() 里引用了 runWriteback() 的局部变量 `hiddenEntries`，
