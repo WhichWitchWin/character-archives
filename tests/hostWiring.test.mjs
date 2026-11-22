@@ -883,3 +883,14 @@ test('claim-picker 的 people 要带编号', () => {
   assert.ok(at > 0, '找不到 claim-picker')
   assert.ok(source.slice(at, at + 1600).includes('id: String(person?.[0]'), 'people 只给了名字、没给编号')
 })
+
+// 快照里 p0 的名字可能是第一轮拿不到称呼时写的占位名「主角」。
+// 面板主页（archive）会覆盖成当前称呼，claim-picker 不覆盖 → 同一个人的两个名字，
+// 来源下拉里就会冒出「主角」（2026-11-22 实测）。
+test('claim-picker 的主角名要跟当前称呼走', () => {
+  const at = source.indexOf("character-archives/claim-picker'")
+  assert.ok(at > 0, '找不到 claim-picker')
+  const body = source.slice(at, at + 2000)
+  assert.ok(body.includes('resolvePlayerName('), 'claim-picker 没覆盖主角名字')
+  assert.ok(body.includes('PLAYER_ID'), '没按 p0 判断')
+})

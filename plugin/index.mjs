@@ -3546,13 +3546,20 @@ export function apply(ctx) {
     if (!Number.isInteger(turn)) return { ok: true, people: [], claims: [] }
     const { snapshot } = await readSnapshotAt(ctx, gameId, turn)
     const definitions = state.entries ?? {}
-    const nameOf = (id) => String((snapshot.p ?? []).find((person) => String(person?.[0]) === String(id))?.[2] ?? '').trim()
+    // 主角的名字要跟**当前称呼**走：快照里那份可能是第一轮拿不到称呼时写的占位名「主角」。
+    // 面板主页（`archive`）已经这么覆盖过了，这里不覆盖 → 同一个人的两个名字，来源下拉里就会
+    // 冒出「主角」（2026-11-22 实测）。酒馆接口现在读得到，就该用。
+    const livePlayerName = await resolvePlayerName(ctx, gameId, String(state.meta?.cardKey ?? gameId))
+    const nameOf = (id) => {
+      const raw = String((snapshot.p ?? []).find((person) => String(person?.[0]) === String(id))?.[2] ?? '').trim()
+      return String(id) === PLAYER_ID && livePlayerName ? livePlayerName : raw
+    }
     return {
       ok: true,
       // 人名只给已建档的：来源、认知都只能从这里面选（2026-11-22 定）。
       // **带编号**：名字会变（主角尤其），面板拿编号当 value，改名之后旧选项也不会对不上。
       people: (snapshot.p ?? [])
-        .map((person) => ({ id: String(person?.[0] ?? ''), name: String(person?.[2] ?? '').trim() }))
+        .map((person) => ({ id: String(person?.[0] ?? ''), name: nameOf(person?.[0]) }))
         .filter((one) => one.id && one.name),
       claims: (snapshot.c ?? []).map((claim) => ({
         claimId: claim?.[0],
