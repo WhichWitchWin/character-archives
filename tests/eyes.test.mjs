@@ -16,6 +16,7 @@ import {
   isClaimHidden,
   hiddenReasonFor,
   dropClaimHides,
+  recallEyeSets,
 } from '../plugin/lib/eyes.js'
 
 const NONE = { hidden: {}, hiddenEntries: {}, hiddenClaims: {} }
@@ -72,4 +73,37 @@ test('缺字段的老数据当作没闭眼（不炸）', () => {
   assert.equal(isEntryHidden(bare, { personId: 'p7', code: 'a' }), true)
   assert.equal(isClaimHidden(bare, { claimId: 12 }), false)
   assert.equal(hiddenReasonFor(undefined, { personId: 'p7', code: 'a' }), null)
+})
+
+// 这三个 Set 直接喂给召回引擎。放在这里测，是因为调用点在 index.mjs 的另一个作用域——
+// 2026-11-14 就因为在那儿引用了别处的局部变量，运行期 ReferenceError 被 catch 吞掉，
+// 召回注入整体静默失效，而所有单测还是绿的。
+test('recallEyeSets：把三只桶翻成引擎要的 Set（只收 true）', () => {
+  const sets = recallEyeSets(
+    { hidden: { p7: true, p8: false }, hiddenEntries: { 'p7:a': true } },
+    { c: [[1, 'p7', 'a', 'x', 1, [], 0]] },
+  )
+  assert.deepEqual([...sets.hidden], ['p7'])
+  assert.deepEqual([...sets.hiddenEntries], ['p7:a'])
+  assert.equal(sets.hiddenClaims.size, 0)
+})
+
+test('recallEyeSets：值眼丢掉当前快照里不存在的号（回退后旧号）', () => {
+  const sets = recallEyeSets({ hiddenClaims: { 1: true, 99: true } }, { c: [[1, 'p7', 'a', 'x', 1, [], 0]] })
+  assert.deepEqual([...sets.hiddenClaims], ['1'])
+})
+
+test('recallEyeSets：空 flags / 空快照都不炸', () => {
+  const sets = recallEyeSets(undefined, undefined)
+  assert.equal(sets.hidden.size, 0)
+  assert.equal(sets.hiddenEntries.size, 0)
+  assert.equal(sets.hiddenClaims.size, 0)
+})
+
+// 条目眼与条目锁各写了一份「人物:栏目」的拼装函数。两份实现一旦格式不同，
+// 面板写进去的键和判定读的键就对不上——全静默失效。这条钉住它们必须一致。
+test('条目眼的键必须与条目锁的键同格式', async () => {
+  const { entryLockKey } = await import('../plugin/lib/locks.js')
+  assert.equal(entryEyeKey('p7', 'a'), entryLockKey('p7', 'a'))
+  assert.equal(entryEyeKey(12, 'B'), entryLockKey(12, 'B'))
 })

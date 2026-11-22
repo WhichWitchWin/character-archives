@@ -191,6 +191,10 @@ export function buildRecallSection({
       if (!Array.isArray(pointer) || String(pointer[0]) !== 'p0') continue
       const claim = claimById.get(pointer[1])
       if (!claim) continue
+      // 主角回场是**自动**行为（不是玩家点名），三层眼照样管：
+      // 条目眼按 p0 自己的栏目判，值眼按命题判
+      if (hiddenEntries.size && hiddenEntries.has(entryEyeKey('p0', String(claim[2] ?? '')))) continue
+      if (hiddenClaimIds.size && hiddenClaimIds.has(String(pointer[1]))) continue
       // 冷却对"全量"不设限——玩家显式要的（ADR 0089 §9），但灌完会盖章（这里不管，调用方盖）
       playerItems.push({ pointer, claim, score: 0 })
     }

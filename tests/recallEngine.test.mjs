@@ -295,3 +295,26 @@ test('值眼：这条命题谁记得都不念', () => {
   assert.ok(!text.includes('在旧港'), '值眼闭掉的命题，谁记得都不念')
   assert.ok(text.includes('在码头'), '别的命题照常')
 })
+
+test('主角回场也受眼管（那是自动行为，不是玩家点名）', () => {
+  const snapshot = {
+    p: [person('p0', 1, '你')],
+    c: [claim(1, 'p0', 'a', '在北京'), claim(2, 'p0', 'a', '在天津')],
+    pt: [pointer('p0', 1), pointer('p0', 2)],
+  }
+  const { text } = buildRecallSection({ ...base, snapshot, playerBack: 5, hiddenClaims: new Set([1]) })
+  assert.ok(!text.includes('在北京'), '值眼闭掉的命题不该出现在主角回场里')
+  assert.ok(text.includes('在天津'))
+})
+
+// 条目眼的键是「**谁的指针** × 栏目」，不是「命题主人 × 栏目」：
+// 闭掉 p1 的 a 栏，p2 记得的同一句话照常念（不然就成了值眼）。
+test('条目眼按「谁的指针」判，不按命题主人', () => {
+  const snapshot = {
+    p: [person('p1', 1, '老陈'), person('p2', 1, '李四')],
+    c: [claim(1, 'p2', 'a', '在码头')],           // 命题属于 p2
+    pt: [pointer('p1', 1), pointer('p2', 1)],     // 两个人都记得
+  }
+  const { text } = buildRecallSection({ ...base, snapshot, hiddenEntries: new Set(['p1:a']) })
+  assert.equal((text.match(/在码头/g) ?? []).length, 1, '只有 p1 那次被闭掉，p2 的照常念')
+})

@@ -26,7 +26,7 @@ import { properNounsOf, wordsOfClaim, filterIndexWords, withClaimWords, configur
 import { buildWriteMaterial } from './lib/writeMaterial.js'
 import { applyWriteActions } from './lib/writeActions.js'
 import { entryLockKey, toggleFlag, dropClaimLocks } from './lib/locks.js'
-import { dropClaimHides } from './lib/eyes.js'
+import { dropClaimHides, recallEyeSets } from './lib/eyes.js'
 import { addGlobalWords, globalWordList, normalizeGlobalWords } from './lib/globalWords.js'
 import { matchText } from './lib/match.js'
 import { splitAliases, namesOfPerson } from './lib/names.js'
@@ -1731,10 +1731,10 @@ export function apply(ctx) {
           turn,
           definitions: state.entries ?? {},
           checkedCodes,
-          hidden: new Set(Object.keys(state.flags?.hidden ?? {}).filter((id) => state.flags.hidden[id])),
-          // 条目眼 / 值眼（M5-10）：与锁正交——锁挡写入，眼挡召回
-          hiddenEntries: new Set(Object.keys(hiddenEntries).filter((key) => hiddenEntries[key] === true)),
-          hiddenClaims: new Set(Object.keys(hiddenClaims).filter((key) => hiddenClaims[key] === true)),
+          // 三层眼（M5-10）：人物 / 条目 / 值，集合从整局数据现算。
+          // 这里在 `apply()` 作用域，`runWriteback()` 里的局部变量拿不到——
+          // 直接拼错名字会让整个召回注入被外层 catch 吞掉（2026-11-14 踩过），所以统一走纯函数
+          ...recallEyeSets(state.flags, snapshot),
           starIds: new Set(Object.keys(state.flags?.star ?? {}).filter((id) => state.flags.star[id])),
           cooldowns: state.cooldowns ?? {},
           cooldownTurns: settings.recall?.cooldownOn ? settings.recall?.cooldownTurns : 0,
@@ -2257,6 +2257,18 @@ export function apply(ctx) {
     snapshot.c = (snapshot.c ?? []).filter((claim) => !goneClaimSet.has(claim))
     snapshot.pt = (snapshot.pt ?? []).filter((pointer) => !gonePointerSet.has(pointer))
     store.writeDeleted(gameId, list)
+
+    // 命题 id 会被复用（nextClaimId = 最大+1）：删人连带摘掉的这些号，锁与眼也要清，
+    // 否则将来恰好拿到同号的新命题会被静默锁住 / 藏着不念（ADR 0113 / 0114）
+    const goneClaimIds = goneClaims.map((claim) => claim?.[0])
+    const { bucket: lockBucket, dropped: locksDropped } = dropClaimLocks(state.flags?.lockClaims, goneClaimIds)
+    const { bucket: hideBucket, dropped: hidesDropped } = dropClaimHides(state.flags?.hiddenClaims, goneClaimIds)
+    if (locksDropped || hidesDropped) {
+      state.flags = state.flags ?? {}
+      state.flags.lockClaims = lockBucket
+      state.flags.hiddenClaims = hideBucket
+      await saveGameState(ctx, gameId, state)
+    }
 
     // 走正常写盘：内容进文件、酒馆里更新指针（回退语义照旧）
     const record = await ctx.tavern.readTurnData({ gameId, turn })

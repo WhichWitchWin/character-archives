@@ -697,9 +697,14 @@ test('锁定接线：值锁按当前快照过滤 + 删命题时同步清锁', ()
   assert.ok(hides >= 4, `值眼也要跟着清，实际 ${hides} 处`)
 })
 
-test('眼睛接线：召回引擎与面板都拿到三层眼', () => {
-  assert.ok(source.includes('hiddenEntries: new Set('), '召回引擎没收到条目眼')
-  assert.ok(source.includes('hiddenClaims: new Set('), '召回引擎没收到值眼')
+test('眼睛接线：召回集合走纯函数（引用错作用域会让召回整体静默失效）', () => {
+  assert.ok(source.includes('...recallEyeSets(state.flags, snapshot)'), '三层眼要走 recallEyeSets，别在调用处直接拼')
+  // 反向守卫：2026-11-14 在 apply() 里引用了 runWriteback() 的局部变量 `hiddenEntries`，
+  // 运行期 ReferenceError 被外层 catch 吞掉 → 召回注入整体失效，而 920 条测试全绿
+  assert.ok(
+    !/hiddenEntries: new Set\(Object\.keys\(hiddenEntries\)/.test(source),
+    '不许引用未声明的同名变量（会静默炸掉召回）',
+  )
   const client = readFileSync(fileURLToPath(new URL('../plugin/client.js', import.meta.url)), 'utf8')
   assert.ok(client.includes('function EyeChip'), '没有 EyeChip 组件')
   assert.equal((client.match(/h\(EyeChip,/g) ?? []).length, 3, 'EyeChip 应被栏目 + 两个值行各用一次')

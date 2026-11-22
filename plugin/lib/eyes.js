@@ -69,3 +69,28 @@ export function dropClaimHides(bucket, claimIds) {
   }
   return { bucket: next, dropped }
 }
+
+/**
+ * 给召回引擎用的三个 Set：把整局数据里的三只眼桶翻成引擎要的形状。
+ *
+ * 为什么单独抽出来：`index.mjs` 的 `apply()` 与 `runWriteback()` 是**两个作用域**，
+ * 在调用处直接拼集合很容易引用到另一边的局部变量——2026-11-14 就这么错过一次：
+ * `apply()` 里写了 `hiddenEntries`，而它只在 `runWriteback()` 里声明，
+ * 运行期 ReferenceError 被外层 catch 吞掉，**召回注入整体静默失效**（920 条测试全绿）。
+ * 抽成纯函数后，只有"传进来的东西"能被用到，且有单测盯着。
+ *
+ * 值眼按当前快照过滤：回退后旧号的命题可能已不存在，不过滤会标错
+ * （注意：过滤只能挡"旧号不存在"，挡不住"号被复用"——那个靠 dropClaimHides）。
+ */
+export function recallEyeSets(flags, snapshot) {
+  const live = new Set((Array.isArray(snapshot?.c) ? snapshot.c : []).map((claim) => String(claim?.[0])))
+  const on = (bucket) => new Set(Object.keys(bucket ?? {}).filter((key) => bucket[key] === true))
+  const liveClaims = Object.fromEntries(
+    Object.entries(flags?.hiddenClaims ?? {}).filter(([key]) => live.has(String(key))),
+  )
+  return {
+    hidden: on(flags?.hidden),
+    hiddenEntries: on(flags?.hiddenEntries),
+    hiddenClaims: on(liveClaims),
+  }
+}
