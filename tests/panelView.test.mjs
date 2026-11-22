@@ -534,3 +534,43 @@ test('面板锁状态：认知行也带锁状态', () => {
   assert.equal(cog.locked, true)
   assert.equal(cog.lockedBy, 'claim')
 })
+
+// ── 条目眼 / 值眼（M5-10）：眼只管「念不念」，与锁分开显示 ──
+test('面板眼状态：没闭眼时都是 false', () => {
+  const view = buildPanelView({ snapshot: lockSnapshot(), definitions: lockDefinitions, now: 3 })
+  const row = view.groups.present.find((item) => item.id === 'p7')
+  const cog = row.cognitions.find((item) => item.claimId === 1)
+  assert.equal(cog.hidden, false)
+  assert.equal(cog.hiddenBy, null)
+  const col = row.cognitionColumns.find((item) => item.code === 'a')
+  assert.equal(col.hidden, false)
+})
+
+test('面板眼状态：条目眼标在「他的认知」的栏目上', () => {
+  const view = buildPanelView({
+    snapshot: lockSnapshot(),
+    definitions: lockDefinitions,
+    hiddenEntries: { 'p7:a': true },
+    now: 3,
+  })
+  const row = view.groups.present.find((item) => item.id === 'p7')
+  const col = row.cognitionColumns.find((item) => item.code === 'a')
+  assert.equal(col.hidden, true)
+  assert.equal(col.hiddenBy, 'entry')
+  const cog = row.cognitions.find((item) => item.claimId === 1)
+  assert.equal(cog.hiddenBy, 'entry')
+})
+
+test('面板眼状态：值眼在「关于他」与「认知」两边都标出来', () => {
+  const view = buildPanelView({
+    snapshot: lockSnapshot(),
+    definitions: lockDefinitions,
+    hiddenClaims: { 1: true },
+    now: 3,
+  })
+  const row = view.groups.present.find((item) => item.id === 'p7')
+  const aboutClaim = row.aboutColumns.find((item) => item.code === 'a').claims[0]
+  assert.equal(aboutClaim.hiddenBy, 'claim')
+  const cog = row.cognitions.find((item) => item.claimId === 1)
+  assert.equal(cog.hiddenBy, 'claim')
+})

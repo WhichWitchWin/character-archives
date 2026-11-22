@@ -272,3 +272,26 @@ test('scorePointer：索引词与自动词撞同一个词时只加 2 分', () =>
   assert.equal(autoOnly, 2, '只有自动词也是 2 分')
   assert.equal(withBoth, autoOnly, '去重前后分数不变')
 })
+
+// ── 条目眼 / 值眼（M5-10）：眼只管「念不念」，与锁（写不写）正交 ──
+test('条目眼：闭了这一栏，这个人别的栏目照常', () => {
+  const snapshot = {
+    p: [person('p1', 1, '老陈')],
+    c: [claim(1, 'p1', 'a', '在旧港'), claim(2, 'p1', 'b', '欠着船钱')],
+    pt: [pointer('p1', 1), pointer('p1', 2)],
+  }
+  const { text } = buildRecallSection({ ...base, snapshot, hiddenEntries: new Set(['p1:a']) })
+  assert.ok(!text.includes('在旧港'), '闭眼的栏目不该被念')
+  assert.ok(text.includes('欠着船钱'), '别的栏目照常')
+})
+
+test('值眼：这条命题谁记得都不念', () => {
+  const snapshot = {
+    p: [person('p1', 1, '老陈'), person('p2', 1, '李四')],
+    c: [claim(1, 'p1', 'a', '在旧港'), claim(2, 'p1', 'a', '在码头')],
+    pt: [pointer('p1', 1), pointer('p2', 1), pointer('p2', 2)],
+  }
+  const { text } = buildRecallSection({ ...base, snapshot, hiddenClaims: new Set([1]) })
+  assert.ok(!text.includes('在旧港'), '值眼闭掉的命题，谁记得都不念')
+  assert.ok(text.includes('在码头'), '别的命题照常')
+})

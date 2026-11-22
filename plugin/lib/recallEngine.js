@@ -16,6 +16,7 @@ import { isPointerCoolingDown } from './cooldown.js'
 import { TRUTH, SELF, UNKNOWN_SOURCE, visibleGroups } from './pointers.js'
 import { fillTemplate } from './promptTemplates.js'
 import { autoWordsOf } from './indexWords.js'
+import { entryEyeKey } from './eyes.js'
 
 const STATE_LABEL = Object.freeze({ [TRUTH.TRUE]: '真', [TRUTH.FALSE]: '假', [TRUTH.UNKNOWN]: '未定' })
 const CONVENTION_LABEL = Object.freeze({ 0: '没完成', 1: '完成了', 2: '过期了', 3: '失败了' })
@@ -104,6 +105,8 @@ export function buildRecallSection({
   definitions = {},
   checkedCodes = new Set(),
   hidden = new Set(),
+  hiddenEntries = new Set(),
+  hiddenClaims = new Set(),
   starIds = new Set(),
   cooldowns = {},
   cooldownTurns = 0,
@@ -117,6 +120,8 @@ export function buildRecallSection({
 } = {}) {
   // 一条指针可能挂着几组来源；显示几组由设置决定，只影响注入文本（P20）
   const conflictDisplay = cognition?.conflictDisplay ?? 'all'
+  // 值眼：命题 id 两侧口径统一按字符串比（调用方传数字 Set 也认）
+  const hiddenClaimIds = new Set([...hiddenClaims].map((id) => String(id)))
   const people = Array.isArray(snapshot?.p) ? snapshot.p : []
   const claims = Array.isArray(snapshot?.c) ? snapshot.c : []
   const pointers = Array.isArray(snapshot?.pt) ? snapshot.pt : []
@@ -156,6 +161,11 @@ export function buildRecallSection({
     const claim = claimById.get(pointer[1])
     if (!claim) continue
     const code = claim[2]
+    // 闸 2（M5-10）：条目眼与值眼——锁不影响召回，眼才影响。
+    // 条目眼按「谁的指针 × 栏目」判（召回注入的是"某个人记得的事"）；
+    // 值眼按命题 id 判（同一句话只有一份，谁记得都不念）。
+    if (hiddenEntries.size && hiddenEntries.has(entryEyeKey(personId, code))) continue
+    if (hiddenClaimIds.size && hiddenClaimIds.has(String(pointer[1]))) continue
     const definition = definitions?.[code]
     if (!definition) continue
     if (checkedCodes.size && !checkedCodes.has(code)) continue   // 闸 3：栏目被勾选

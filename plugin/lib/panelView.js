@@ -10,6 +10,7 @@ import { splitAliases } from './names.js'
 import { PLAYER_ID } from './player.js'
 import { wordsOfClaim, autoWordsOf } from './indexWords.js'
 import { lockReasonFor } from './locks.js'
+import { hiddenReasonFor, isClaimHidden } from './eyes.js'
 
 /** 沉降默认轮数（§7.11）。 */
 export const DORMANT_TURNS = 20
@@ -35,6 +36,8 @@ export function buildPanelView({
   lockEntries = {},
   lockClaims = {},
   hidden = {},
+  hiddenEntries = {},
+  hiddenClaims = {},
   seen = {},
   fuzzyLeft = {},
   coldManual = {},
@@ -72,6 +75,8 @@ export function buildPanelView({
 
   // 三层锁（M5-6）：人物 / 条目 / 值。判定与「谁锁的」都交给 lib/locks.js 一处，面板只负责显示。
   const locks = { lock, lockEntries, lockClaims }
+  // 三层眼（M5-10）：只管召回「念不念」，与锁（写不写）分开算，面板上两个图标各显示各的
+  const eyes = { hidden, hiddenEntries, hiddenClaims }
 
   // 「关于他的命题的指针」：记着关于这个人某件事的指针（别人的、也可以是他自己的）。
   // 变化可见要用它——改他的档案时动的是这类指针，他自己的认知指针根本没动。
@@ -107,12 +112,17 @@ export function buildPanelView({
       const aboutId = String(claim?.[1] ?? '')
       const code = String(claim?.[2] ?? '')
       const lockedBy = lockReasonFor(locks, { personId: aboutId, code, claimId: pointer[1] })
+      // 眼按「谁的指针」判：personId 用持有这条认知的人（这里就是正在渲染的这个 id），不是命题主人
+      const hiddenBy = hiddenReasonFor(eyes, { personId: String(id), code, claimId: pointer[1] })
       return {
         claimId: pointer[1],
         code,
         // 锁状态（M5-6）：lockedBy 说明被谁锁住——'person' / 'entry' / 'claim' / null
         locked: lockedBy !== null,
         lockedBy,
+        // 眼状态（M5-10）：hiddenBy 同上，'person' / 'entry' / 'claim' / null
+        hidden: hiddenBy !== null,
+        hiddenBy,
         // 栏目名：命题第 3 位存的是码，面板要显示人能看懂的名字
         columnName: String(definitions?.[code]?.name ?? code),
         text: String(claim?.[3] ?? ''),
@@ -166,6 +176,9 @@ export function buildPanelView({
             .filter((claim) => String(claim[1] ?? '') === String(id) && String(claim[2] ?? '') === code)
             .map((claim) => {
               const lockedBy = lockReasonFor(locks, { personId: String(claim[1] ?? ''), code: String(claim[2] ?? ''), claimId: claim[0] })
+              // 「关于他」这一侧只标**值眼**（命题级、全局）：人物眼/条目眼说的是"谁的指针不念"，
+              // 与"关于他的命题"不是一回事，混进来会误导
+              const claimHidden = isClaimHidden(eyes, { claimId: claim[0] })
               return {
                 claimId: claim[0],
                 text: String(claim[3] ?? ''),
@@ -173,6 +186,8 @@ export function buildPanelView({
                 autoWords: autoWordsOf(claim[3], wordsOfClaim(claim)),
                 locked: lockedBy !== null,
                 lockedBy,
+                hidden: claimHidden,
+                hiddenBy: claimHidden ? 'claim' : null,
               }
             }),
         }
@@ -180,11 +195,17 @@ export function buildPanelView({
       // 「按认知浏览」：他的指针按**命题的栏目**分组——「老陈认为周砚的职业是画师」会落在「职业」下面。
       // 只列有内容的栏目（认知视角不补空），跟 aboutColumns 的数据源不同，别混。
       cognitionColumns: columnCodes
-        .map((code) => ({
-          code,
-          name: String(definitions?.[code]?.name ?? code),
-          items: cognitions.filter((cog) => cog.code === code),
-        }))
+        .map((code) => {
+          // 条目眼（M5-10）：按「谁的指针 × 栏目」判，所以用这个人的 id，不是命题主人
+          const columnHiddenBy = hiddenReasonFor(eyes, { personId: String(id), code })
+          return {
+            code,
+            name: String(definitions?.[code]?.name ?? code),
+            hidden: columnHiddenBy !== null,
+            hiddenBy: columnHiddenBy,
+            items: cognitions.filter((cog) => cog.code === code),
+          }
+        })
         .filter((col) => col.items.length > 0),
       unnamed: !name,
       // 单字名要标出来：他可能召不回来——正文里「景」常是「景公子」的一部分，

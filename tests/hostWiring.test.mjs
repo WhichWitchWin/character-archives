@@ -668,10 +668,11 @@ test('锁定接线：面板拿到 lockEntries / lockClaims', () => {
 test('锁定接线：toggle 支持 lockEntry / lockClaim，且命题号只认数字', () => {
   const at = lines.findIndex((line) => line.includes("'character-archives/toggle'"))
   assert.ok(at >= 0, '找不到 toggle 接口')
-  const near = lines.slice(at, at + 45).join('\n')
-  assert.ok(near.includes("'lockEntry'"), '不认 lockEntry')
-  assert.ok(near.includes("'lockClaim'"), '不认 lockClaim')
-  // Number() 太宽：true→1、'0x10'→16 会锁错命题
+  const near = lines.slice(at, at + 55).join('\n')
+  for (const field of ['lockEntry:', 'lockClaim:', 'hideEntry:', 'hideClaim:']) {
+    assert.ok(near.includes(field), `不认 ${field.replace(':', '')}`)
+  }
+  // Number() 太宽：true→1、'0x10'→16 会把锁/眼标到错误命题上
   assert.ok(near.includes('/^\\d+$/'), '命题号应只认数字')
 })
 
@@ -686,11 +687,22 @@ test('锁定接线：浏览器侧栏目行 / 值行 / 认知行都有小锁按�
 // 命题 id 是「最大值+1」，会复用：回退后不过滤就会把锁错到新命题上；删命题时不清锁同理。
 test('锁定接线：值锁按当前快照过滤 + 删命题时同步清锁', () => {
   assert.ok(source.includes('existingClaimIds'), '值锁要按当前快照过滤（回退后 id 会复用）')
-  // 当前快照那份面板要传真实值锁；历史快照视图必须传空（旧轮的命题 id 不是同一套）
-  const panelHits = lines.filter((line) => line.includes('lockClaims: state.flags?.lockClaims')).length
-  assert.ok(panelHits >= 1, `当前快照面板要传 lockClaims，实际 ${panelHits}`)
+  assert.ok(source.includes('liveClaimState(state.flags?.lockClaims)'), '面板的值锁要按活着的命题过滤')
+  assert.ok(source.includes('liveClaimState(state.flags?.hiddenClaims)'), '面板的值眼同理')
   assert.ok(source.includes('lockClaims: {},'), '历史快照视图不能用当前值锁（会标错行）')
   // 删单条 / 批量删 / 撤回 / 孤儿清理 各一处调用
   const drops = (source.match(/dropClaimLocks\(/g) ?? []).length
   assert.ok(drops >= 4, `删命题的每条路都要清锁，实际 ${drops} 处`)
+  const hides = (source.match(/dropClaimHides\(/g) ?? []).length
+  assert.ok(hides >= 4, `值眼也要跟着清，实际 ${hides} 处`)
+})
+
+test('眼睛接线：召回引擎与面板都拿到三层眼', () => {
+  assert.ok(source.includes('hiddenEntries: new Set('), '召回引擎没收到条目眼')
+  assert.ok(source.includes('hiddenClaims: new Set('), '召回引擎没收到值眼')
+  const client = readFileSync(fileURLToPath(new URL('../plugin/client.js', import.meta.url)), 'utf8')
+  assert.ok(client.includes('function EyeChip'), '没有 EyeChip 组件')
+  assert.equal((client.match(/h\(EyeChip,/g) ?? []).length, 3, 'EyeChip 应被栏目 + 两个值行各用一次')
+  assert.ok(client.includes("field: 'hideEntry'"), '栏目行没接 hideEntry')
+  assert.equal((client.match(/field: 'hideClaim'/g) ?? []).length, 2, '两个值行都要接 hideClaim')
 })

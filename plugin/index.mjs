@@ -26,6 +26,7 @@ import { properNounsOf, wordsOfClaim, filterIndexWords, withClaimWords, configur
 import { buildWriteMaterial } from './lib/writeMaterial.js'
 import { applyWriteActions } from './lib/writeActions.js'
 import { entryLockKey, toggleFlag, dropClaimLocks } from './lib/locks.js'
+import { dropClaimHides } from './lib/eyes.js'
 import { addGlobalWords, globalWordList, normalizeGlobalWords } from './lib/globalWords.js'
 import { matchText } from './lib/match.js'
 import { splitAliases, namesOfPerson } from './lib/names.js'
@@ -1066,6 +1067,11 @@ async function runWriteback(ctx, state, { gameId, turn, text, textVersion, setti
     Object.entries(state.flags?.lockClaims ?? {}).filter(([key]) => existingClaimIds.has(String(key))),
   )
   const locks = { lock: state.flags?.lock ?? {}, lockEntries, lockClaims }
+  // 三层眼（M5-10）：与锁同一套过滤——命题 id 会复用，不过滤就会把眼标到新命题上
+  const hiddenEntries = state.flags?.hiddenEntries ?? {}
+  const hiddenClaims = Object.fromEntries(
+    Object.entries(state.flags?.hiddenClaims ?? {}).filter(([key]) => existingClaimIds.has(String(key))),
+  )
   // 素材过滤用集合版（值锁的键是命题 id，转成数字才和 claim[0] 比得上）
   const lockedEntrySet = new Set(Object.keys(lockEntries).filter((key) => lockEntries[key] === true))
   const lockedClaimSet = new Set(
@@ -1392,8 +1398,11 @@ async function runWriteback(ctx, state, { gameId, turn, text, textVersion, setti
         state.cooldowns = dropClaimCooldowns(state.cooldowns, item.claimId)
         // 命题 id 会被复用（nextClaimId = 最大+1），锁也得跟着清，否则新命题会继承旧号的锁（ADR 0113）
         const { bucket } = dropClaimLocks(state.flags?.lockClaims, [item.claimId])
+        // 值眼同理（M5-10）：号会复用，不清就会把新命题藏起来
+        const { bucket: hideBucket } = dropClaimHides(state.flags?.hiddenClaims, [item.claimId])
         state.flags = state.flags ?? {}
         state.flags.lockClaims = bucket
+        state.flags.hiddenClaims = hideBucket
       }
       pushDebug(state, 'info', `撤回 ${retraction.applied.length} 条认知`, {
         // 谁 → 关于谁 · 命题内容：命题说的是谁由程序按序号查（ADR 0106），
@@ -1465,8 +1474,10 @@ async function runWriteback(ctx, state, { gameId, turn, text, textVersion, setti
     // 同理（ADR 0113）：这些号会被将来新建的命题复用，留着锁就会锁错新值
     {
       const { bucket } = dropClaimLocks(state.flags?.lockClaims, orphans.removed)
+      const { bucket: hideBucket } = dropClaimHides(state.flags?.hiddenClaims, orphans.removed)
       state.flags = state.flags ?? {}
       state.flags.lockClaims = bucket
+      state.flags.hiddenClaims = hideBucket
     }
     pushDebug(state, 'info', `孤儿命题清掉 ${orphans.removed.length} 条`, { id: orphans.removed.slice(0, 10) })
   }
@@ -1721,6 +1732,9 @@ export function apply(ctx) {
           definitions: state.entries ?? {},
           checkedCodes,
           hidden: new Set(Object.keys(state.flags?.hidden ?? {}).filter((id) => state.flags.hidden[id])),
+          // 条目眼 / 值眼（M5-10）：与锁正交——锁挡写入，眼挡召回
+          hiddenEntries: new Set(Object.keys(hiddenEntries).filter((key) => hiddenEntries[key] === true)),
+          hiddenClaims: new Set(Object.keys(hiddenClaims).filter((key) => hiddenClaims[key] === true)),
           starIds: new Set(Object.keys(state.flags?.star ?? {}).filter((id) => state.flags.star[id])),
           cooldowns: state.cooldowns ?? {},
           cooldownTurns: settings.recall?.cooldownOn ? settings.recall?.cooldownTurns : 0,
@@ -2800,14 +2814,22 @@ export function apply(ctx) {
     })
     if (playerState.changed) parsed.snapshot.p = playerState.persons
 
+    // 值锁 / 值眼按「这一轮真实存在的命题」过滤：命题 id 会复用，
+    // 不过滤就会把旧号上的锁或眼标到一条从没碰过的新值上
+    const liveClaimIds = new Set((parsed.snapshot.c ?? []).map((claim) => String(claim?.[0])))
+    const liveClaimState = (bucket) =>
+      Object.fromEntries(Object.entries(bucket ?? {}).filter(([key]) => liveClaimIds.has(String(key))))
+
     const view = buildPanelView({
       snapshot: parsed.snapshot,
       definitions,
       checkedCodes,
       lock: state.flags?.lock ?? {},
       lockEntries: state.flags?.lockEntries ?? {},
-      lockClaims: state.flags?.lockClaims ?? {},
+      lockClaims: liveClaimState(state.flags?.lockClaims),
       hidden: state.flags?.hidden ?? {},
+      hiddenEntries: state.flags?.hiddenEntries ?? {},
+      hiddenClaims: liveClaimState(state.flags?.hiddenClaims),
       seen: state.flags?.seen ?? {},
       fuzzyLeft: state.flags?.fuzzyLeft ?? {},
       coldManual: state.flags?.coldManual ?? {},
@@ -2867,6 +2889,9 @@ export function apply(ctx) {
       // 拿当前的值锁去标会标错行，所以历史视图只显示人物锁与条目锁
       lockClaims: {},
       hidden: state.flags?.hidden ?? {},
+      hiddenEntries: state.flags?.hiddenEntries ?? {},
+      // 值眼同理（旧轮的命题 id 不是同一套）
+      hiddenClaims: {},
       seen: state.flags?.seen ?? {},
       fuzzyLeft: state.flags?.fuzzyLeft ?? {},
       coldManual: state.flags?.coldManual ?? {},
@@ -3308,10 +3333,12 @@ export function apply(ctx) {
     const cooldownChanged = Object.keys(cleanedCooldowns).length !== Object.keys(state.cooldowns ?? {}).length
     // 命题 id 会被复用，锁也要跟着清（ADR 0113）——不清的话新命题会继承旧号的锁
     const { bucket: lockBucket, dropped: locksDropped } = dropClaimLocks(state.flags?.lockClaims, [id])
-    if (cooldownChanged || locksDropped) {
+    const { bucket: hideBucket, dropped: hidesDropped } = dropClaimHides(state.flags?.hiddenClaims, [id])
+    if (cooldownChanged || locksDropped || hidesDropped) {
       state.cooldowns = cleanedCooldowns
       state.flags = state.flags ?? {}
       state.flags.lockClaims = lockBucket
+      state.flags.hiddenClaims = hideBucket
       await saveGameState(ctx, gameId, state)
     }
 
@@ -3378,10 +3405,12 @@ export function apply(ctx) {
     let cooldowns = state.cooldowns ?? {}
     for (const claimId of removedClaims) cooldowns = dropClaimCooldowns(cooldowns, claimId)
     const { bucket: lockBucket, dropped: locksDropped } = dropClaimLocks(state.flags?.lockClaims, removedClaims)
-    if (Object.keys(cooldowns).length !== Object.keys(state.cooldowns ?? {}).length || locksDropped) {
+    const { bucket: hideBucket, dropped: hidesDropped } = dropClaimHides(state.flags?.hiddenClaims, removedClaims)
+    if (Object.keys(cooldowns).length !== Object.keys(state.cooldowns ?? {}).length || locksDropped || hidesDropped) {
       state.cooldowns = cooldowns
       state.flags = state.flags ?? {}
       state.flags.lockClaims = lockBucket
+      state.flags.hiddenClaims = hideBucket
       await saveGameState(ctx, gameId, state)
     }
 
@@ -3602,16 +3631,23 @@ export function apply(ctx) {
       return { ok: true, field, personId, value: next }
     }
 
-    // 条目锁 / 值锁（M5-6）：键分别是「人物:栏目码」与命题 id
-    if (field === 'lockEntry' || field === 'lockClaim') {
-      const bucketName = field === 'lockEntry' ? 'lockEntries' : 'lockClaims'
+    // 条目级 / 值级开关（M5-6 锁、M5-10 眼）：键分别是「人物:栏目码」与命题 id
+    const BUCKETS = {
+      lockEntry: 'lockEntries',
+      lockClaim: 'lockClaims',
+      hideEntry: 'hiddenEntries',
+      hideClaim: 'hiddenClaims',
+    }
+    if (BUCKETS[field]) {
+      const bucketName = BUCKETS[field]
+      const entryLevel = field === 'lockEntry' || field === 'hideEntry'
       let key = ''
-      if (field === 'lockEntry') {
+      if (entryLevel) {
         const codeText = String(code ?? '').trim()
         if (!codeText) throw new Error('没指定栏目')
         key = entryLockKey(personId, codeText)
       } else {
-        // 只认数字/纯数字字符串：Number() 太宽（true→1、'0x10'→16 会锁错命题）
+        // 只认数字/纯数字字符串：Number() 太宽（true→1、'0x10'→16 会把锁/眼标到错误命题上）
         const idText = String(claimId ?? '').trim()
         if (!/^\d+$/.test(idText)) throw new Error('命题编号不对')
         key = idText

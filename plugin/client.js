@@ -565,6 +565,28 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /** 三层眼的小眼睛按钮（M5-10）：只管「念不念」，与锁（写不写）各显示各的。 */
+    function EyeChip({ hiddenBy, disabled = false, onToggle } = {}) {
+      const hidden = Boolean(hiddenBy)
+      const tip = !hidden
+        ? '照常召回：模型能看到这条'
+        : hiddenBy === 'person'
+          ? '随人物隐藏：先在人物那一行睁开，这里才能单独改（不允许子比父宽）'
+          : hiddenBy === 'entry'
+            ? '随栏目隐藏：先睁开这一栏'
+            : '已隐藏：不召回这条（写入照常）'
+      return h(
+        'button',
+        {
+          onClick: onToggle,
+          disabled: disabled || hiddenBy === 'person' || hiddenBy === 'entry',
+          title: tip,
+          style: { ...iconBtn, fontSize: font.xxs, padding: '0 3px', lineHeight: '14px' },
+        },
+        hidden ? h(EyeOffIcon) : h(EyeIcon),
+      )
+    }
+
     // 展开区：按浏览方式显示不同东西——
     //   browse='columns'    「他是什么样」：关于他的命题，按栏目列（空栏目也列）
     //   browse='cognitions'「他的认知」：他的指针，按命题的栏目分组
@@ -898,6 +920,12 @@ window.__ModuleLoader__.load({
                                 disabled: Boolean(busy),
                                 onToggle: () => call('toggle', { personId: row.id, field: 'lockClaim', claimId: claim.claimId }, '已切换值锁'),
                               }),
+                              h(EyeChip, {
+                                key: `eye-${claim.claimId}`,
+                                hiddenBy: claim.hiddenBy,
+                                disabled: Boolean(busy),
+                                onToggle: () => call('toggle', { personId: row.id, field: 'hideClaim', claimId: claim.claimId }, '已切换值可见性'),
+                              }),
                               // 删这条命题：连"谁知道它"一起没。破坏面比下面那个大，所以文案要点名
                               h(
                                 'button',
@@ -942,7 +970,15 @@ window.__ModuleLoader__.load({
                   return h(
                     'div',
                     { key: col.code, style: { display: 'flex', flexDirection: 'column', gap: 2 } },
-                    h('div', { style: { ...muted, fontSize: font.xs, fontWeight: 600 } }, col.name),
+                    h('div', { style: { ...muted, fontSize: font.xs, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 } },
+                      col.name,
+                      h(EyeChip, {
+                        key: `eye-col-${col.code}`,
+                        hiddenBy: col.hiddenBy,
+                        disabled: Boolean(busy),
+                        onToggle: () => call('toggle', { personId: row.id, field: 'hideEntry', code: col.code }, '已切换栏目可见性'),
+                      }),
+                    ),
                     shownItems(col.items, expanded).map((cog) =>
                       h(
                         'div',
@@ -992,6 +1028,12 @@ window.__ModuleLoader__.load({
                           lockedBy: cog.lockedBy,
                           disabled: Boolean(busy),
                           onToggle: () => call('toggle', { personId: row.id, field: 'lockClaim', claimId: cog.claimId }, '已切换值锁'),
+                        }),
+                        h(EyeChip, {
+                          key: `eye-${cog.claimId}`,
+                          hiddenBy: cog.hiddenBy,
+                          disabled: Boolean(busy),
+                          onToggle: () => call('toggle', { personId: row.id, field: 'hideClaim', claimId: cog.claimId }, '已切换值可见性'),
                         }),
                         cog.groups.map((group) =>
                           h(
