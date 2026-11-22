@@ -377,6 +377,21 @@ test('图标：操作按钮一律内联 SVG，不用 emoji', () => {
   assert.equal((client.match(/viewBox: '0 0 24 24'/gu) ?? []).length, 1, '图标底板应只定义一次')
 })
 
+// 守卫：命题清单（补认知的下拉、来源下拉都靠它）要跟档案数据一起刷新。
+// 踩过的坑（2026-11-22）：清单原来在人物详情块里自己拉一份，useEffect 依赖只有
+// [tavernUi, gameId]，而详情块的 key 是「名字|别名」——加完命题组件不会重挂，
+// 于是「他是什么样」里新命题看得见、补认知的下拉里却没有，得关掉面板重开才出现。
+test('命题清单与档案数据同源刷新：拉取放 useArchive，详情块只收属性', () => {
+  const archive = sliceBetween(client, 'function useArchive', 'function Toolbar')
+  assert.match(archive, /claim-picker/, 'claim-picker 要在 useArchive 里拉（跟着 reload 一起刷新）')
+  assert.match(archive, /setCatalog/, 'useArchive 要存下这份清单')
+
+  const detail = sliceBetween(client, 'function DetailBlock', 'function DraftBlock')
+  assert.ok(!detail.includes('claim-picker'), '详情块里不该再自己拉清单（只拉一次，加完命题看不到新的）')
+  assert.ok(!detail.includes('const [catalog, setCatalog]'), '详情块不该再自己存一份清单')
+  assert.ok(detail.includes('catalog'), '详情块要从属性里拿清单')
+})
+
 // 拖拽只在人物行的标题行生效（2026-11-06 用户反馈）：
 // 整行可拖会让展开后在正文里选中文字也变成拖动人物。
 test('拖拽：人物行只有标题行可拖，根容器不再 draggable', () => {

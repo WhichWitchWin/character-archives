@@ -226,6 +226,11 @@ window.__ModuleLoader__.load({
 
     function useArchive(tavernUi, gameId) {
       const [state, setState] = useState({ loading: true, data: null, error: null })
+      // 面板上另有一份「清单」：全体已建档人名（来源下拉用）＋全体命题摘要（补认知的下拉用）。
+      // 以前它住在人物详情块里各拉一份、整个挂载期只拉一次——详情块的 key 是「名字|别名」，
+      // 于是加完一条命题组件不会重挂，下拉里永远看不到新的，得关掉面板重开才出现（2026-11-22）。
+      // 现在跟档案数据同源：都挂在 reload 上，任何写操作之后一起刷新。
+      const [catalog, setCatalog] = useState({ people: [], claims: [] })
       const reload = useCallback(() => {
         if (!gameId) return
         setState((prev) => ({ ...prev, loading: true, error: null }))
@@ -233,11 +238,16 @@ window.__ModuleLoader__.load({
           .callHost(`${PLUGIN}/archive`, { gameId })
           .then((data) => setState({ loading: false, data, error: null }))
           .catch((error) => setState({ loading: false, data: null, error: String(error?.message || error) }))
+        // 清单拉不到就退化成空列表，不挡面板其余功能
+        tavernUi
+          .callHost(`${PLUGIN}/claim-picker`, { gameId })
+          .then((result) => setCatalog({ people: result?.people ?? [], claims: result?.claims ?? [] }))
+          .catch(() => {})
       }, [gameId])
       useEffect(() => {
         reload()
       }, [reload])
-      return { ...state, reload }
+      return { ...state, catalog, reload }
     }
 
     function Toolbar({ tavernUi, gameId, onReload, onDeleted }) {
@@ -593,7 +603,7 @@ window.__ModuleLoader__.load({
     // 展开区：按浏览方式显示不同东西——
     //   browse='columns'    「他是什么样」：关于他的命题，按栏目列（空栏目也列）
     //   browse='cognitions'「他的认知」：他的指针，按命题的栏目分组
-    function DetailBlock({ tavernUi, gameId, row, codes, onChanged, browse = 'columns' }) {
+    function DetailBlock({ tavernUi, gameId, row, codes, catalog, onChanged, browse = 'columns' }) {
       const [busy, setBusy] = useState('')
       const [hint, setHint] = useState('')
       const [nameDraft, setNameDraft] = useState(row.name ?? '')
@@ -611,23 +621,10 @@ window.__ModuleLoader__.load({
       // Shift 区间选择的锚点（命题/认知各记各的）
       const claimAnchor = useRef(null)
       const cogAnchor = useRef(null)
-      // 认知视图要用：全体已建档人名（来源只能从这里选）＋全体命题摘要（补认知只能从已有命题里选）
-      // 一次拉取；取不到就退化成空列表，不挡面板其余功能
-      const [catalog, setCatalog] = useState({ people: [], claims: [] })
+      // 来源下拉（全体已建档人名）与补认知的下拉（全体命题）都吃 catalog 属性——
+      // 它由面板顶层跟档案数据一起拉，这里不再自己拉一份（为什么：见 useArchive 的注释）
       // 正在给哪一栏挑命题（''=没在挑）
       const [pickFor, setPickFor] = useState('')
-      useEffect(() => {
-        let alive = true
-        tavernUi
-          .callHost(`${PLUGIN}/claim-picker`, { gameId })
-          .then((result) => {
-            if (alive) setCatalog({ people: result?.people ?? [], claims: result?.claims ?? [] })
-          })
-          .catch(() => {})
-        return () => {
-          alive = false
-        }
-      }, [tavernUi, gameId])
 
       const toggleColumn = (code) => {
         setOpenColumns((prev) => {
@@ -1251,7 +1248,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function PersonRow({ tavernUi, gameId, row, codes, onChanged, focus, browse }) {
+    function PersonRow({ tavernUi, gameId, row, codes, catalog, onChanged, focus, browse }) {
       const [open, setOpen] = useState(false)
       const [editingName, setEditingName] = useState(false)
       const [nameDraft, setNameDraft] = useState('')
@@ -1510,7 +1507,7 @@ window.__ModuleLoader__.load({
             h(TrashIcon),
           ),
         ),
-        open ? h(DetailBlock, { key: `${row.name ?? ''}|${row.aliases ?? ''}`, tavernUi, gameId, row, codes, onChanged, browse }) : null,
+        open ? h(DetailBlock, { key: `${row.name ?? ''}|${row.aliases ?? ''}`, tavernUi, gameId, row, codes, catalog, onChanged, browse }) : null,
       )
     }
 
@@ -1782,7 +1779,7 @@ window.__ModuleLoader__.load({
 
     // 分组：**拖放的目标容器**。拖进来的规则由父组件 onDropItem 决定：
     // 在场／离场＝改状态；冷档＝手动沉底；模糊建档与模糊离场**不收任何东西**。
-    function Group({ title, kind, rows, tavernUi, gameId, codes, onChanged, defaultOpen, onDropItem, focus, browse }) {
+    function Group({ title, kind, rows, tavernUi, gameId, codes, catalog, onChanged, defaultOpen, onDropItem, focus, browse }) {
       const [open, setOpen] = useState(Boolean(defaultOpen))
       const [over, setOver] = useState('')   // '' 无 | 'ok' 绿 | 'no' 红
 
@@ -1888,7 +1885,7 @@ window.__ModuleLoader__.load({
         open
           ? rows.length
             ? rows.map((row) =>
-                h(PersonRow, { key: row.id, tavernUi, gameId, row, codes, onChanged, focus, browse }),
+                h(PersonRow, { key: row.id, tavernUi, gameId, row, codes, catalog, onChanged, focus, browse }),
               )
             : h('div', { style: { ...muted, paddingLeft: 18 } }, '（空）')
           : null,
@@ -3035,7 +3032,7 @@ window.__ModuleLoader__.load({
     }
 
     function ArchivePanel({ tavernUi, gameId, visible = true }) {
-      const { loading, data, error, reload } = useArchive(tavernUi, gameId)
+      const { loading, data, error, catalog, reload } = useArchive(tavernUi, gameId)
       const [view, setView] = useState('archive')
       // 酒馆里装着的插件版本：以前面板上完全看不出来，装的是旧版也发现不了（2026-11-22 踩过）
       const [pluginVersion, setPluginVersion] = useState('')
@@ -3306,10 +3303,10 @@ window.__ModuleLoader__.load({
                     browseBtn('cognitions', '按认知浏览'),
                   ),
                   h(DraftBlock, { key: 'draft', tavernUi, gameId, rows: data.draft ?? [], onChanged: reload }),
-                  h(Group, { title: '在场', kind: 'present', rows: data.groups?.present ?? [], tavernUi, gameId, codes, onChanged: reloadAll, defaultOpen: true, focus, browse }),
-                  h(Group, { title: '模糊离场', kind: 'fuzzyOffline', rows: data.groups?.fuzzyOffline ?? [], tavernUi, gameId, codes, onChanged: reloadAll, defaultOpen: false, focus, browse }),
-                  h(Group, { title: '离场', kind: 'offline', rows: data.groups?.offline ?? [], tavernUi, gameId, codes, onChanged: reloadAll, defaultOpen: false, focus, browse }),
-                  h(Group, { title: '冷档', kind: 'cold', rows: data.groups?.cold ?? [], tavernUi, gameId, codes, onChanged: reloadAll, defaultOpen: false, focus, browse }),
+                  h(Group, { title: '在场', kind: 'present', rows: data.groups?.present ?? [], tavernUi, gameId, codes, catalog, onChanged: reloadAll, defaultOpen: true, focus, browse }),
+                  h(Group, { title: '模糊离场', kind: 'fuzzyOffline', rows: data.groups?.fuzzyOffline ?? [], tavernUi, gameId, codes, catalog, onChanged: reloadAll, defaultOpen: false, focus, browse }),
+                  h(Group, { title: '离场', kind: 'offline', rows: data.groups?.offline ?? [], tavernUi, gameId, codes, catalog, onChanged: reloadAll, defaultOpen: false, focus, browse }),
+                  h(Group, { title: '冷档', kind: 'cold', rows: data.groups?.cold ?? [], tavernUi, gameId, codes, catalog, onChanged: reloadAll, defaultOpen: false, focus, browse }),
                 ),
           )
         }
