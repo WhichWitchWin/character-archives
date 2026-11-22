@@ -697,6 +697,16 @@ test('锁定接线：值锁按当前快照过滤 + 删命题时同步清锁', ()
   assert.ok(hides >= 4, `值眼也要跟着清，实际 ${hides} 处`)
 })
 
+test('版本显示：宿主提供 version 接口（读 package.json），面板标题旁显示', () => {
+  // 手写版本常量是漂移源：一定要从 package.json 读
+  assert.ok(source.includes("'character-archives/version'"), '缺 version 接口')
+  assert.ok(source.includes('PLUGIN_VERSION'), '没有装配版本号')
+  assert.ok(/readFileSync\(path\.join\(PLUGIN_DIR, 'package\.json'\)/.test(source), '版本要从 package.json 读，不手写')
+  const client = readFileSync(fileURLToPath(new URL('../plugin/client.js', import.meta.url)), 'utf8')
+  assert.ok(client.includes('/version`'), '面板要调 version 接口')
+  assert.ok(client.includes('v${pluginVersion}'), '面板要把版本显示出来')
+})
+
 test('召回接线：成功 / 空 / 失败三条日志都要接进调试面板', () => {
   // 2026-11-14 之前召回整条链一条调试都没有：注入整段静默失效时，
   // 玩家只会觉得"模型不记得人"，面板上什么都查不到

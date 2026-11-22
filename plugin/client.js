@@ -2981,6 +2981,8 @@ window.__ModuleLoader__.load({
     function ArchivePanel({ tavernUi, gameId, visible = true }) {
       const { loading, data, error, reload } = useArchive(tavernUi, gameId)
       const [view, setView] = useState('archive')
+      // 酒馆里装着的插件版本：以前面板上完全看不出来，装的是旧版也发现不了（2026-11-22 踩过）
+      const [pluginVersion, setPluginVersion] = useState('')
       // 档案视窗内的两种浏览方式：
       //   columns    「他是什么样」——关于他的命题，按栏目列（空栏目也列）
       //   cognitions 「他的认知」——他的指针，按命题的栏目分组
@@ -3031,6 +3033,20 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         if (visible) reload()
       }, [visible, reload])
+
+      // 版本只取一次（重装插件才会变）。取不到就什么都不显示，不影响面板。
+      useEffect(() => {
+        let alive = true
+        tavernUi
+          .callHost(`${PLUGIN}/version`, {})
+          .then((result) => {
+            if (alive) setPluginVersion(String(result?.version ?? ''))
+          })
+          .catch(() => {})
+        return () => {
+          alive = false
+        }
+      }, [tavernUi])
 
       // **结算即推送**（M4-16）：宿主每轮结算后 publishState，我们订阅后立刻重读。
       // 比轮询省电、也更及时（不会再出现"等 3 秒才变"）。
@@ -3096,6 +3112,13 @@ window.__ModuleLoader__.load({
         tab('settings', '设置'),
         tab('prompts', '提示词'),
         tab('presets', '预设'),
+        // 版本贴在标签栏最右边：一眼能看出酒馆里装的是哪一版
+        pluginVersion
+          ? h('span', {
+              style: { ...muted, fontSize: font.xxs, marginLeft: 6, opacity: 0.75 },
+              title: '酒馆里装着的插件版本（重装插件才会变）',
+            }, `v${pluginVersion}`)
+          : null,
       )
 
       // 档案视窗里的两个切换按钮：同一个「栏目」壳，数据源不同。

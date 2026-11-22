@@ -217,6 +217,21 @@ async function savePrompts(ctx, patch) {
 }
 const PLUGIN_DIR = fileURLToPath(new URL('.', import.meta.url))
 
+/**
+ * 插件版本：**直接读 `package.json`**，不手写常量。
+ *
+ * 手写版本号是漂移源（发版时忘了改、本地调试时看不出来）——2026-11-22 就是因为
+ * 酒馆里装的还是 0.1.0、面板上却没有任何地方能看出这一点，白查了一轮日志。
+ * 读盘放在模块顶层只跑一次，失败也不抛（读不到就显示空，不影响主流程）。
+ */
+const PLUGIN_VERSION = (() => {
+  try {
+    return String(JSON.parse(readFileSync(path.join(PLUGIN_DIR, 'package.json'), 'utf8')).version ?? '')
+  } catch {
+    return ''
+  }
+})()
+
 /** 系统提示词的**运行期来源**：每次读这个 txt，改完装上就生效，不用重启。 */
 const SYSTEM_PROMPT_FILE = fileURLToPath(new URL('./assets/system-prompt.txt', import.meta.url))
 /** 写入段 / 召回段同样以 txt 为唯一真相（2026-11-04 对称化）。 */
@@ -3704,6 +3719,10 @@ export function apply(ctx) {
 
     throw new Error(`不认识的开关：${field}`)
   })
+
+  // 面板标题旁显示版本：一眼看出酒馆里装的是哪一版。
+  // 本地开发 / 覆盖升级后最常见的问题就是「装的还是旧版」，以前面板上完全看不出来。
+  ctx.tavern.handle('character-archives/version', async () => ({ ok: true, version: PLUGIN_VERSION }))
 
   // 浏览器侧（侧栏面板、酒馆状态页分节）来取摘要。
   ctx.tavern.handle('character-archives/summary', async ({ gameId } = {}) => {
