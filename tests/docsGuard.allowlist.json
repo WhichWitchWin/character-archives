@@ -16,7 +16,8 @@
     "applyValueActions",
     "mergeMvuIntoClaims"
   ],
-  "paths": [
+  "modules": [],
+  "repoPaths": [
     "lib/capacity.js",
     "lib/notice.js"
   ],

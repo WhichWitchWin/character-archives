@@ -1,0 +1,6 @@
+{
+  "name": "fixture-plugin-empty",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module"
+}

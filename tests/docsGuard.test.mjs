@@ -6,9 +6,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { collectDocIssues, cellCount, cells, DEFAULT_ROOT } from '../scripts/docsRules.mjs'
 
 const ALLOWLIST_FILE = new URL('./docsGuard.allowlist.json', import.meta.url)
+const FIXTURE = fileURLToPath(new URL('./fixtures/docs-guard', import.meta.url))
+const FIXTURE_EMPTY = fileURLToPath(new URL('./fixtures/docs-guard-empty', import.meta.url))
 
 function loadAllowlist() {
   if (!existsSync(ALLOWLIST_FILE)) return {}
@@ -23,13 +26,44 @@ test('文档与代码不许漂移（ADR 索引 / 模块清单 / 设置键 / 版�
   assert.equal(issues.length, 0, `文档体检发现 ${issues.length} 处不一致：\n${report}`)
 })
 
-// 下面三条守住工具本身：规则写歪（比如正则永远不匹配）会让上面那条测试永远绿，等于没有守卫。
+// 下面两条是「负向样例」：如果规则写歪（正则不匹配、锚点找不到就静默返回空数组），
+// 上面那条正式断言会永远绿，等于没守。用故意写坏的 fixture 逼每条规则开口。
+test('负向样例：坏文档上 9 条规则必须各抓到至少一处（防规则空转）', async () => {
+  const issues = await collectDocIssues({ root: FIXTURE, allowlist: {} })
+  const found = new Set(issues.map((item) => item.rule))
+  const expected = [
+    'adr-index',
+    'module-missing',
+    'module-unlisted',
+    'setting-missing',
+    'roadmap-status',
+    'table-columns',
+    'path-missing',
+    'symbol-missing',
+    'version',
+  ]
+  const missing = expected.filter((rule) => !found.has(rule))
+  assert.deepEqual(missing, [], `这些规则在坏样例上一条都没抓到：${missing.join('、')}`)
+})
+
+test('负向样例：锚点与版本号找不到时要报，不许静默通过', async () => {
+  const issues = await collectDocIssues({ root: FIXTURE_EMPTY, allowlist: {} })
+  const found = new Set(issues.map((item) => item.rule))
+  assert.ok(found.has('module-section-missing'), '§十三 锚点缺失没有报')
+  assert.ok(found.has('version-missing'), '版本号匹配不到没有报')
+})
+
+// 下面三条守住工具本身：正则写歪会让上面几条永远绿。
 test('表格列数：普通行按竖线数', () => {
   assert.equal(cellCount('| M4-1 | 预设表 | ✅ |'), 3)
 })
 
 test('表格列数：`\\|` 是转义，不当作分隔符', () => {
   assert.equal(cellCount('| a \\| b | c |'), 2)
+})
+
+test('表格列数：省略尾竖线的行也要数对', () => {
+  assert.equal(cellCount('| a | b'), 2)
 })
 
 test('表格单元格还原转义内容', () => {

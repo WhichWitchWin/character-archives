@@ -14,7 +14,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const DEFAULT_ROOT = join(HERE, '..')
 
-const FENCE = /^\s*(```|~~~)/
 const ADR_INDEX_ROW = /^\|\s*\[(\d{4})\]/
 
 /** 读文件成行数组（保留行号信息，1 基）。 */
@@ -22,17 +21,25 @@ function linesOf(file) {
   return readFileSync(file, 'utf8').split(/\r?\n/)
 }
 
-/** 逐行产出 `[行号, 文本]`，跳过 ``` / ~~~ 围栏里的内容（那里面的 `|` 与反引号不是文档数据）。 */
+/** 逐行产出 `[行号, 文本]`，跳过代码围栏里的内容（那里面的 `|` 与反引号不是文档数据）。
+ *  要记住是哪种围栏：``` 块里出现 ~~~ 是普通内容，不能翻转状态。 */
 function* mdLines(file) {
-  let inFence = false
+  let fence = null
   const lines = linesOf(file)
   for (let index = 0; index < lines.length; index += 1) {
     const text = lines[index]
-    if (FENCE.test(text)) {
-      inFence = !inFence
-      continue
+    const marker = text.match(/^\s*(```|~~~)/)
+    if (marker) {
+      if (fence === null) {
+        fence = marker[1]
+        continue
+      }
+      if (fence === marker[1]) {
+        fence = null
+        continue
+      }
     }
-    if (inFence) continue
+    if (fence !== null) continue
     yield [index + 1, text]
   }
 }
@@ -42,21 +49,25 @@ function stripStruck(text) {
   return text.replace(/~~[^~]*~~/g, '')
 }
 
-/** markdown 表格一行的列数（`\|` 是转义，不算分隔符）。不是表格行返回 0。 */
+/** markdown 表格一行的列数。`\|` 是转义不算分隔符；尾竖线可以省略（GFM 允许）。 */
 export function cellCount(row) {
   const trimmed = row.trim()
   if (!trimmed.startsWith('|')) return 0
-  const cells = trimmed.replace(/\\\|/g, '\u0000').split('|')
-  // 行以 `|` 开头结尾 → 首尾各多一个空串
-  return cells.length - 2
+  const parts = trimmed.replace(/\\\|/g, '\u0000').split('|')
+  let count = parts.length
+  if (parts[0] === '') count -= 1
+  if (parts.length > 1 && parts[parts.length - 1] === '') count -= 1
+  return Math.max(0, count)
 }
 
-/** 表格单元格内容（同样处理 `\|` 转义）。 */
+/** 表格单元格内容（同样处理 `\|` 转义与省略的尾竖线）。 */
 export function cells(row) {
   const trimmed = row.trim()
   if (!trimmed.startsWith('|')) return null
   const parts = trimmed.replace(/\\\|/g, '\u0000').split('|')
-  return parts.slice(1, -1).map((cell) => cell.replace(/\u0000/g, '|').trim())
+  if (parts[0] === '') parts.shift()
+  if (parts.length && parts[parts.length - 1] === '') parts.pop()
+  return parts.map((cell) => cell.replace(/\u0000/g, '|').trim())
 }
 
 /** 从一段 markdown 里切出某标题到下一个同级（或更高）标题之间的正文。 */
@@ -96,6 +107,11 @@ function* backticks(text) {
   while ((match = pattern.exec(text))) yield match[1]
 }
 
+/** 正则转义：组名将来若带 `.`／`-` 之类，直接拼进正则会变成通配。 */
+function escapeRegex(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 function issue(list, file, line, rule, detail) {
   list.push({ file, line, rule, detail })
 }
@@ -109,7 +125,10 @@ export async function collectDocIssues({ root = DEFAULT_ROOT, allowlist = {} } =
   const problems = []
   const allow = {
     symbols: new Set(allowlist.symbols ?? []),
-    paths: new Set(allowlist.paths ?? []),
+    // 模块名（如 `batchDelete.js`）与仓库路径（如 `lib/capacity.js`）分开存：
+    // 共用一个集合时，一条路径豁免会顺手压掉「模块没登表」，等于给了后门。
+    modules: new Set(allowlist.modules ?? []),
+    repoPaths: new Set(allowlist.repoPaths ?? []),
     settings: new Set(allowlist.settings ?? []),
   }
 
@@ -129,35 +148,41 @@ export async function collectDocIssues({ root = DEFAULT_ROOT, allowlist = {} } =
   // ── 规则 1：§十三 模块清单 ↔ plugin/lib 双向对齐 ──
   // 只查一边就会漏：文档写了不存在的文件（删了模块忘改表），代码加了文件忘登表。
   {
-    const section = sliceByHeading(designText, /^## 十三、代码模块清单/m, /^## 附录 A/m)
-    const sectionLines = section.split(/\r?\n/)
-    // 报错要指回 DESIGN 的真实行号，不然读者得自己数
-    const startLine = designText.slice(0, designText.search(/^## 十三、代码模块清单/m)).split(/\r?\n/).length
-    const listed = new Map() // 文件名 → 行号
-    sectionLines.forEach((raw, index) => {
-      const text = stripStruck(raw)
-      for (const match of text.matchAll(/`([A-Za-z0-9_-]+\.js)`/g)) {
-        if (!listed.has(match[1])) listed.set(match[1], startLine + index)
+    const ANCHOR = /^## 十三、代码模块清单/m
+    if (!ANCHOR.test(designText)) {
+      // 锚点被改名或删掉时，两个循环都不跑、静默通过——这是最坏的空转，必须报出来
+      issue(problems, 'docs/DESIGN.md', 0, 'module-section-missing', '找不到「## 十三、代码模块清单」这一节，模块清单无从校验')
+    } else {
+      const section = sliceByHeading(designText, ANCHOR, /^## 附录 A/m)
+      const sectionLines = section.split(/\r?\n/)
+      // 报错要指回 DESIGN 的真实行号，不然读者得自己数
+      const startLine = designText.slice(0, designText.search(ANCHOR)).split(/\r?\n/).length
+      const listed = new Map() // 文件名 → 行号
+      sectionLines.forEach((raw, index) => {
+        const text = stripStruck(raw)
+        for (const match of text.matchAll(/`([A-Za-z0-9_-]+\.m?js)`/g)) {
+          if (!listed.has(match[1])) listed.set(match[1], startLine + index)
+        }
+      })
+      const libDir = join(root, 'plugin', 'lib')
+      const libFiles = existsSync(libDir)
+        ? readdirSync(libDir).filter((name) => /\.m?js$/.test(name))
+        : []
+      for (const name of listed.keys()) {
+        const candidates = [
+          join(libDir, name),
+          join(root, 'plugin', name),
+          join(root, 'scripts', name),
+          join(root, 'tests', name),
+        ]
+        if (!candidates.some((path) => existsSync(path)) && !allow.modules.has(name)) {
+          issue(problems, 'docs/DESIGN.md', listed.get(name), 'module-missing', `§十三 列了 \`${name}\`，但文件不存在`)
+        }
       }
-    })
-    const libDir = join(root, 'plugin', 'lib')
-    const libFiles = existsSync(libDir)
-      ? readdirSync(libDir).filter((name) => name.endsWith('.js'))
-      : []
-    for (const name of listed.keys()) {
-      const candidates = [
-        join(libDir, name),
-        join(root, 'plugin', name),
-        join(root, 'scripts', name),
-        join(root, 'tests', name),
-      ]
-      if (!candidates.some((path) => existsSync(path)) && !allow.paths.has(name)) {
-        issue(problems, 'docs/DESIGN.md', listed.get(name), 'module-missing', `§十三 列了 \`${name}\`，但文件不存在`)
-      }
-    }
-    for (const name of libFiles) {
-      if (!listed.has(name) && !allow.paths.has(name)) {
-        issue(problems, 'plugin/lib', 0, 'module-unlisted', `\`${name}\` 没有登进 §十三 模块清单`)
+      for (const name of libFiles) {
+        if (!listed.has(name) && !allow.modules.has(name)) {
+          issue(problems, 'plugin/lib', 0, 'module-unlisted', `\`${name}\` 没有登进 §十三 模块清单`)
+        }
       }
     }
   }
@@ -167,7 +192,7 @@ export async function collectDocIssues({ root = DEFAULT_ROOT, allowlist = {} } =
   {
     const { DEFAULT_SETTINGS } = await import(pathToFileURL(join(root, 'plugin', 'lib', 'settings.js')).href)
     const groups = Object.keys(DEFAULT_SETTINGS)
-    const keyPattern = new RegExp(`\\b(${groups.join('|')})\\.([A-Za-z][A-Za-z0-9]*)`, 'g')
+    const keyPattern = new RegExp(`\\b(${groups.map(escapeRegex).join('|')})\\.([A-Za-z][A-Za-z0-9]*)`, 'g')
     // `lib/draft.js`、`lib/names.js` 会被上一条正则读成「组 draft 的键 js」——扩展名不是设置键
     const EXTENSIONS = new Set(['js', 'mjs', 'json', 'md', 'txt', 'test', 'ts'])
     for (const [lineNo, raw] of mdLines(designFile)) {
@@ -184,27 +209,40 @@ export async function collectDocIssues({ root = DEFAULT_ROOT, allowlist = {} } =
     }
   }
 
-  // ── 规则 3：ADR 文件数 ↔ 索引行数 ──
+  // ── 规则 3：ADR 文件 ↔ 索引（按编号集合比，不只比条数）──
+  // 只比条数时，删掉一个 ADR 再复制一行索引就能骗过去。
   {
-    const files = existsSync(adrDir)
-      ? readdirSync(adrDir).filter((name) => name.endsWith('.md') && name !== 'README.md')
-      : []
-    const rows = linesOf(adrIndexFile).filter((line) => ADR_INDEX_ROW.test(line))
-    if (files.length !== rows.length) {
-      issue(problems, 'docs/adr/README.md', 0, 'adr-index', `ADR 文件 ${files.length} 个，索引 ${rows.length} 行`)
+    const fileNums = (existsSync(adrDir) ? readdirSync(adrDir) : [])
+      .filter((name) => name.endsWith('.md') && name !== 'README.md')
+      .map((name) => name.slice(0, 4))
+    const rowNums = linesOf(adrIndexFile)
+      .map((line) => line.match(ADR_INDEX_ROW)?.[1])
+      .filter(Boolean)
+    const missingInIndex = fileNums.filter((num) => !rowNums.includes(num))
+    const missingFile = rowNums.filter((num) => !fileNums.includes(num))
+    if (missingInIndex.length) {
+      issue(problems, 'docs/adr/README.md', 0, 'adr-index', `这些 ADR 有文件但没进索引：${missingInIndex.join('、')}`)
+    }
+    if (missingFile.length) {
+      issue(problems, 'docs/adr/README.md', 0, 'adr-index', `这些索引行找不到对应文件：${missingFile.join('、')}`)
     }
   }
 
   // ── 规则 4：版本号三处一致（plugin/package.json ↔ README ↔ 根 CHANGELOG 最新段） ──
+  // 匹配不到也要报：措辞一改就静默通过，是最隐蔽的空转。
   {
     const pkg = JSON.parse(readFileSync(join(root, 'plugin', 'package.json'), 'utf8'))
     const version = String(pkg.version ?? '')
     const readmeMatch = readmeText.match(/版本\s*`([0-9]+\.[0-9]+\.[0-9]+)`/)
     const changelogMatch = changelogText.match(/^##\s*\[([0-9]+\.[0-9]+\.[0-9]+)\]/m)
-    if (readmeMatch && readmeMatch[1] !== version) {
+    if (!readmeMatch) {
+      issue(problems, 'README.md', 0, 'version-missing', '找不到「版本 `x.y.z`」，版本一致性无从校验')
+    } else if (readmeMatch[1] !== version) {
       issue(problems, 'README.md', 0, 'version', `README 写 ${readmeMatch[1]}，plugin/package.json 是 ${version}`)
     }
-    if (changelogMatch && changelogMatch[1] !== version) {
+    if (!changelogMatch) {
+      issue(problems, 'CHANGELOG.md', 0, 'version-missing', '找不到 `## [x.y.z]` 最新版本段，版本一致性无从校验')
+    } else if (changelogMatch[1] !== version) {
       issue(problems, 'CHANGELOG.md', 0, 'version', `根 CHANGELOG 最新段 ${changelogMatch[1]}，plugin/package.json 是 ${version}`)
     }
   }
@@ -214,7 +252,8 @@ export async function collectDocIssues({ root = DEFAULT_ROOT, allowlist = {} } =
     const allowed = ['✅', '🚧', '⬜', '⏸', '❌']
     for (const [lineNo, raw] of mdLines(roadmapFile)) {
       const row = cells(raw)
-      if (!row || !/^(M\d+|P\d+|B\d+)$/.test(row[0])) continue
+      // 编号形如 M4-1（带小节号）、P21、B1——只写 M\d+ 会把整张 M 表漏掉
+      if (!row || !/^(M\d+(?:-\d+)?|P\d+|B\d+)$/.test(row[0])) continue
       const status = row[2] ?? ''
       if (!allowed.some((mark) => status.startsWith(mark))) {
         issue(problems, 'docs/ROADMAP.md', lineNo, 'roadmap-status', `${row[0]} 的状态「${status}」不是五种之一`)
@@ -263,14 +302,15 @@ export async function collectDocIssues({ root = DEFAULT_ROOT, allowlist = {} } =
 
   // ── 规则 8：反引号里的仓库内路径必须存在 ──
   {
-    const repoPath = /^(?:plugin\/|scripts\/|tests\/|docs\/|assets\/|lib\/|\.github\/)[\w./-]+\.(?:m?js|json|txt|md|ya?ml)$/
+    // `adr/` 写成相对 docs/ 的短路径（文档里常见 `adr/0084-xxx.md`），所以候选里多加一个 docs/
+    const repoPath = /^(?:plugin\/|scripts\/|tests\/|docs\/|adr\/|assets\/|lib\/|\.github\/)[\w./-]+\.(?:m?js|json|txt|md|css|html|png|svg|ya?ml)$/
     for (const [file, rel] of [[designFile, 'docs/DESIGN.md'], [roadmapFile, 'docs/ROADMAP.md']]) {
       for (const [lineNo, raw] of mdLines(file)) {
         const text = stripStruck(raw)
         for (const token of backticks(text)) {
           if (!repoPath.test(token)) continue
-          if (allow.paths.has(token)) continue
-          const candidates = [join(root, token), join(root, 'plugin', token)]
+          if (allow.repoPaths.has(token)) continue
+          const candidates = [join(root, token), join(root, 'plugin', token), join(root, 'docs', token)]
           if (!candidates.some((path) => existsSync(path))) {
             issue(problems, rel, lineNo, 'path-missing', `\`${token}\` 不存在`)
           }
