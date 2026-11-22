@@ -574,3 +574,58 @@ test('面板眼状态：值眼在「关于他」与「认知」两边都标出�
   const cog = row.cognitions.find((item) => item.claimId === 1)
   assert.equal(cog.hiddenBy, 'claim')
 })
+
+// ── 2026-11-22 用户实测：栏目锁上之后解不开 ──
+//
+// 根因：面板自己拿 `lockedBy === 'entry'` 判「被上层压住」，而**栏目那一行自己锁上时
+// lockedBy 正好也是 'entry'** → 按钮 disabled、再也点不动。眼同理。
+// 修法：由 panelView 输出「这个按钮能不能点」（按层判），client 只读，不重复这套逻辑。
+
+test('面板锁状态：栏目自己锁住时锁按钮仍可点（要能解开）', () => {
+  const view = buildPanelView({
+    snapshot: lockSnapshot(),
+    definitions: lockDefinitions,
+    lockEntries: { 'p7:a': true },
+    now: 3,
+  })
+  const col = view.groups.present.find((item) => item.id === 'p7').aboutColumns.find((item) => item.code === 'a')
+  assert.equal(col.lockedBy, 'entry')
+  assert.equal(col.lockBlocked, false, '自己锁的这一栏必须能点开')
+})
+
+test('面板锁状态：栏目被人物锁压住时不能点', () => {
+  const view = buildPanelView({ snapshot: lockSnapshot(), definitions: lockDefinitions, lock: { p7: true }, now: 3 })
+  const col = view.groups.present.find((item) => item.id === 'p7').aboutColumns.find((item) => item.code === 'a')
+  assert.equal(col.lockBlocked, true, '随人物锁：先解人物锁')
+})
+
+test('面板锁状态：值行被栏目锁压住不能点，自己被值锁锁住能点', () => {
+  const byEntry = buildPanelView({
+    snapshot: lockSnapshot(),
+    definitions: lockDefinitions,
+    lockEntries: { 'p7:a': true },
+    now: 3,
+  })
+  const claim1 = byEntry.groups.present.find((item) => item.id === 'p7').aboutColumns.find((item) => item.code === 'a').claims[0]
+  assert.equal(claim1.lockBlocked, true)
+
+  const byClaim = buildPanelView({ snapshot: lockSnapshot(), definitions: lockDefinitions, lockClaims: { 1: true }, now: 3 })
+  const claim2 = byClaim.groups.present.find((item) => item.id === 'p7').aboutColumns.find((item) => item.code === 'a').claims[0]
+  assert.equal(claim2.lockBlocked, false, '自己被值锁锁住要能点开')
+})
+
+test('面板眼状态：栏目自己闭眼时能点开，随人物眼时不能', () => {
+  const own = buildPanelView({
+    snapshot: lockSnapshot(),
+    definitions: lockDefinitions,
+    hiddenEntries: { 'p7:a': true },
+    now: 3,
+  })
+  const col1 = own.groups.present.find((item) => item.id === 'p7').cognitionColumns.find((item) => item.code === 'a')
+  assert.equal(col1.hiddenBy, 'entry')
+  assert.equal(col1.eyeBlocked, false, '自己闭的这一栏必须能点开')
+
+  const parent = buildPanelView({ snapshot: lockSnapshot(), definitions: lockDefinitions, hidden: { p7: true }, now: 3 })
+  const col2 = parent.groups.present.find((item) => item.id === 'p7').cognitionColumns.find((item) => item.code === 'a')
+  assert.equal(col2.eyeBlocked, true)
+})

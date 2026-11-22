@@ -432,6 +432,33 @@ test('批量选择只算看得见的行：收起的栏目不算', () => {
   }
 })
 
+// 2026-11-22 用户实测「锁上之后解不开」。根因：按钮自己拿 `lockedBy === 'entry'` 判
+// 「被上层压住」，而**栏目那一行自己锁上时 lockedBy 正好也是 'entry'** → 解锁入口被禁用。
+// 现在「能不能点」由 panelView 算（`lockBlocked` / `eyeBlocked`），组件只读，不许自己判。
+test('锁/眼按钮：不许自己判「被上层压住」，只读服务端给的 blocked', () => {
+  assert.ok(client.includes('blocked = false'), 'LockChip／EyeChip 要有 blocked 参数')
+  assert.ok(
+    !/disabled: disabled \|\| lockedBy === 'person' \|\| lockedBy === 'entry'/u.test(client),
+    'LockChip 又在组件里自己判了（栏目行自己锁住时会把解锁按钮也禁用掉）',
+  )
+  assert.ok(
+    !/disabled: disabled \|\| hiddenBy === 'person' \|\| hiddenBy === 'entry'/u.test(client),
+    'EyeChip 又在组件里自己判了（同上）',
+  )
+  // 每个调用点都要把服务端算好的字段接上
+  for (const [token, field] of [
+    ['lock-col-', 'col.lockBlocked'],
+    ['lock-${claim.claimId}', 'claim.lockBlocked'],
+    ['eye-col-', 'col.eyeBlocked'],
+    ['lock-${cog.claimId}', 'cog.lockBlocked'],
+    ['eye-${cog.claimId}', 'cog.eyeBlocked'],
+  ]) {
+    const at = client.indexOf(token)
+    assert.ok(at > 0, `找不到 ${token}`)
+    assert.ok(client.slice(at, at + 400).includes(field), `${token} 没接 ${field}`)
+  }
+})
+
 // 拖拽只在人物行的标题行生效（2026-11-06 用户反馈）：
 // 整行可拖会让展开后在正文里选中文字也变成拖动人物。
 test('拖拽：人物行只有标题行可拖，根容器不再 draggable', () => {

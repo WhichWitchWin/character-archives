@@ -123,6 +123,10 @@ export function buildPanelView({
         // 眼状态（M5-10）：hiddenBy 同上，'person' / 'entry' / 'claim' / null
         hidden: hiddenBy !== null,
         hiddenBy,
+        // 按钮能不能点：只被**更上层**压住时才不能（不允许子比父宽）。
+        // 自己这一层锁住/闭眼时必须能点，否则锁上就再也解不开（2026-11-22 用户实测）
+        lockBlocked: lockedBy === 'person' || lockedBy === 'entry',
+        eyeBlocked: hiddenBy === 'person' || hiddenBy === 'entry',
         // 栏目名：命题第 3 位存的是码，面板要显示人能看懂的名字
         columnName: String(definitions?.[code]?.name ?? code),
         text: String(claim?.[3] ?? ''),
@@ -172,6 +176,9 @@ export function buildPanelView({
           // 条目锁（M5-6）：人物锁上时整栏也算锁（不允许子比父宽），lockedBy 说明为什么点不动
           locked: columnLockedBy !== null,
           lockedBy: columnLockedBy,
+          // 栏目这一行的锁按钮能不能点：**只有人物锁**能压住它。
+          // 栏自己锁住时 lockedBy 也是 'entry'，若照搬「'entry' 就不能点」会把解锁入口也禁用掉。
+          lockBlocked: columnLockedBy === 'person',
           claims: claims
             .filter((claim) => String(claim[1] ?? '') === String(id) && String(claim[2] ?? '') === code)
             .map((claim) => {
@@ -186,6 +193,8 @@ export function buildPanelView({
                 autoWords: autoWordsOf(claim[3], wordsOfClaim(claim)),
                 locked: lockedBy !== null,
                 lockedBy,
+                // 值这一行的锁按钮：被人物锁或栏目锁压住才不能点；自己被值锁锁住要能点开
+                lockBlocked: lockedBy === 'person' || lockedBy === 'entry',
                 hidden: claimHidden,
                 hiddenBy: claimHidden ? 'claim' : null,
               }
@@ -203,6 +212,8 @@ export function buildPanelView({
             name: String(definitions?.[code]?.name ?? code),
             hidden: columnHiddenBy !== null,
             hiddenBy: columnHiddenBy,
+            // 栏目这一行的眼睛能不能点：**只有人物眼**能压住它（同锁的道理，2026-11-22）
+            eyeBlocked: columnHiddenBy === 'person',
             items: cognitions.filter((cog) => cog.code === code),
           }
         })

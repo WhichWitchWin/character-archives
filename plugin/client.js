@@ -554,23 +554,29 @@ window.__ModuleLoader__.load({
       )
     }
 
-    /** 三层锁的小锁按钮（M5-6）：栏目行、值行、认知行共用一份，提示语按「谁锁的」变。 */
-    function LockChip({ lockedBy, disabled = false, onToggle } = {}) {
+    /**
+     * 三层锁的小锁按钮（M5-6）：栏目行、值行、认知行共用一份，提示语按「谁锁的」变。
+     *
+     * `blocked` 由服务端算（`panelView` 的 `lockBlocked`）：**只有被更上层压住时才为 true**。
+     * 别在这里用 `lockedBy === 'entry'` 判——栏目行自己锁上时 `lockedBy` 正好也是 `'entry'`，
+     * 那样会把解锁入口一起禁用掉，锁上就再也点不动（2026-11-22 用户实测）。
+     */
+    function LockChip({ lockedBy, blocked = false, disabled = false, onToggle, scope = '这条' } = {}) {
       const locked = Boolean(lockedBy)
-      const tip = !locked
-        ? '未锁：模型可以改'
-        : lockedBy === 'person'
+      const tip = blocked
+        ? lockedBy === 'person'
           ? '随人物锁：先在人物那一行解锁，这里才能单独改（不允许子比父宽）'
-          : lockedBy === 'entry'
-            ? '随栏目锁：先解开这一栏的锁'
-            : '已锁：模型不能改这条（召回照常）'
+          : '随栏目锁：先解开这一栏的锁'
+        : locked
+          ? `已锁：模型不能改${scope}（召回照常）`
+          : '未锁：模型可以改'
       return h(
         'button',
         {
           onClick: onToggle,
-          // 被上层锁压住时点它没有意义（不允许子比父宽）：person 要解人物锁、entry 要解栏目锁，
+          // 被上层压住时点它没有意义（不允许子比父宽）：person 要解人物锁、entry 要解栏目锁，
           // 直接禁用比"点了没反应、还偷偷写了一条 lockClaims"好
-          disabled: disabled || lockedBy === 'person' || lockedBy === 'entry',
+          disabled: disabled || blocked,
           title: tip,
           style: { ...iconBtn, fontSize: font.xxs, padding: '0 3px', lineHeight: '14px' },
         },
@@ -578,21 +584,21 @@ window.__ModuleLoader__.load({
       )
     }
 
-    /** 三层眼的小眼睛按钮（M5-10）：只管「念不念」，与锁（写不写）各显示各的。 */
-    function EyeChip({ hiddenBy, disabled = false, onToggle } = {}) {
+    /** 三层眼的小眼睛按钮（M5-10）：只管「念不念」，与锁（写不写）各显示各的。`blocked` 同理。 */
+    function EyeChip({ hiddenBy, blocked = false, disabled = false, onToggle, scope = '这条' } = {}) {
       const hidden = Boolean(hiddenBy)
-      const tip = !hidden
-        ? '照常召回：模型能看到这条'
-        : hiddenBy === 'person'
+      const tip = blocked
+        ? hiddenBy === 'person'
           ? '随人物隐藏：先在人物那一行睁开，这里才能单独改（不允许子比父宽）'
-          : hiddenBy === 'entry'
-            ? '随栏目隐藏：先睁开这一栏'
-            : '已隐藏：不召回这条（写入照常）'
+          : '随栏目隐藏：先睁开这一栏'
+        : hidden
+          ? `已隐藏：不召回${scope}（写入照常）`
+          : '照常召回：模型能看到这条'
       return h(
         'button',
         {
           onClick: onToggle,
-          disabled: disabled || hiddenBy === 'person' || hiddenBy === 'entry',
+          disabled: disabled || blocked,
           title: tip,
           style: { ...iconBtn, fontSize: font.xxs, padding: '0 3px', lineHeight: '14px' },
         },
@@ -928,6 +934,8 @@ window.__ModuleLoader__.load({
                         h(LockChip, {
                           key: `lock-col-${col.code}`,
                           lockedBy: col.lockedBy,
+                          blocked: col.lockBlocked,
+                          scope: '这一栏',
                           disabled: Boolean(busy),
                           onToggle: (event) => {
                             event?.stopPropagation?.()
@@ -981,6 +989,7 @@ window.__ModuleLoader__.load({
                               h(LockChip, {
                                 key: `lock-${claim.claimId}`,
                                 lockedBy: claim.lockedBy,
+                                blocked: claim.lockBlocked,
                                 disabled: Boolean(busy),
                                 onToggle: () => call('toggle', { personId: row.id, field: 'lockClaim', claimId: claim.claimId }, '已切换值锁'),
                               }),
@@ -1065,6 +1074,8 @@ window.__ModuleLoader__.load({
                         h(EyeChip, {
                           key: `eye-col-${col.code}`,
                           hiddenBy: col.hiddenBy,
+                          blocked: col.eyeBlocked,
+                          scope: '这一栏',
                           disabled: Boolean(busy),
                           onToggle: (event) => {
                             event?.stopPropagation?.()
@@ -1157,12 +1168,14 @@ window.__ModuleLoader__.load({
                         h(LockChip, {
                           key: `lock-${cog.claimId}`,
                           lockedBy: cog.lockedBy,
+                          blocked: cog.lockBlocked,
                           disabled: Boolean(busy),
                           onToggle: () => call('toggle', { personId: row.id, field: 'lockClaim', claimId: cog.claimId }, '已切换值锁'),
                         }),
                         h(EyeChip, {
                           key: `eye-${cog.claimId}`,
                           hiddenBy: cog.hiddenBy,
+                          blocked: cog.eyeBlocked,
                           disabled: Boolean(busy),
                           onToggle: () => call('toggle', { personId: row.id, field: 'hideClaim', claimId: cog.claimId }, '已切换值可见性'),
                         }),
