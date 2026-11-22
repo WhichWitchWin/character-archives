@@ -697,6 +697,20 @@ test('锁定接线：值锁按当前快照过滤 + 删命题时同步清锁', ()
   assert.ok(hides >= 4, `值眼也要跟着清，实际 ${hides} 处`)
 })
 
+test('召回接线：模板必须在 turnSection 自己作用域里读，不能借别处的变量', () => {
+  // 2026-11-22 实测：`template: templates.recall` 里的 templates 只在 runWriteback() 里声明，
+  // 于是自动召回每轮 ReferenceError、被外层 catch 吞掉 → 召回从来没成功过，而没人看得出来
+  const at = source.indexOf('ctx.tavern.turnSection({')
+  assert.ok(at >= 0, '找不到 turnSection')
+  const block = source.slice(at, at + 7000)
+  assert.ok(block.includes('const templates = await readPrompts(ctx)'), 'turnSection 里没读 templates')
+  assert.ok(block.includes('template: templates.recall'), '召回模板没传进去')
+  // 反向：这个 handler 里任何 `模板/提示词` 变量都必须在上面的读取之后才有
+  const readAt = block.indexOf('const templates = await readPrompts(ctx)')
+  const useAt = block.indexOf('template: templates.recall')
+  assert.ok(readAt < useAt, '先读模板再用')
+})
+
 test('版本显示：宿主提供 version 接口（读 package.json），面板标题旁显示', () => {
   // 手写版本常量是漂移源：一定要从 package.json 读
   assert.ok(source.includes("'character-archives/version'"), '缺 version 接口')

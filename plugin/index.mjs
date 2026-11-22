@@ -1738,6 +1738,11 @@ export function apply(ctx) {
         const settings = resolveSettings(await readScopedSettings(ctx, state))
         const identity = await readIdentity(ctx, String(state.meta?.cardKey ?? gameId))
 
+        // 三段提示词（面板存档优先、回落 assets/*.txt）。**必须在自己的作用域里读**：
+        // `runWriteback()` 里也有一份同名变量，借那边的会 ReferenceError——
+        // 2026-11-22 实测就是这样让自动召回每轮静默失败（被外层 catch 吞成空串）。
+        const templates = await readPrompts(ctx)
+
         const checkedCodes = Array.isArray(settings.checkedCodes)
           ? new Set(settings.checkedCodes)
           : new Set(Object.keys(state.entries ?? {}))
