@@ -1214,10 +1214,11 @@ window.__ModuleLoader__.load({
                             // （写错一个名字，后端解析不了就整条被拒；2026-11-22 改成下拉）
                             h('select', {
                               key: `src-${group.index}`,
-                              value: group.source === SELF_SOURCE ? '自己' : group.source === UNKNOWN_SOURCE ? '未知' : group.sourceName,
+                              // value 用**编号**：名字会变（主角尤其），拿名字当 value 改名后旧选项就对不上
+                              value: group.source === SELF_SOURCE ? '自己' : group.source === UNKNOWN_SOURCE ? '未知' : String(group.source ?? ''),
                               onChange: (event) => {
                                 const next = String(event.target.value ?? '').trim()
-                                if (!next || next === group.sourceName) return
+                                if (!next || next === group.source) return
                                 call(
                                   'update-pointer',
                                   { personId: row.id, claimId: cog.claimId, index: group.index, source: next },
@@ -1229,8 +1230,8 @@ window.__ModuleLoader__.load({
                               h('option', { key: 'self', value: '自己' }, '自己'),
                               h('option', { key: 'unknown', value: '未知' }, '未知'),
                               ...catalog.people
-                                .filter((name) => name && name !== row.name)
-                                .map((name) => h('option', { key: name, value: name }, name)),
+                                .filter((one) => one.name && one.name !== row.name)
+                                .map((one) => h('option', { key: one.id, value: one.id }, one.name)),
                             ]),
                             group.gt ? h('span', { style: muted }, group.gt) : null,
                           ),

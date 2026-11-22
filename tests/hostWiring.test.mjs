@@ -876,3 +876,10 @@ test('豁免接线：正文模型查档案（archive_query）也算「给过一�
   assert.ok(body.includes('manualFreeUsed'), 'archive_query 没把「用掉了」写回')
   assert.ok(body.includes('manualFreeStale'), 'archive_query 没把「没用了」清掉')
 })
+
+// 面板的来源下拉拿编号当 value（名字会变，编号不会）
+test('claim-picker 的 people 要带编号', () => {
+  const at = source.indexOf("character-archives/claim-picker'")
+  assert.ok(at > 0, '找不到 claim-picker')
+  assert.ok(source.slice(at, at + 1600).includes('id: String(person?.[0]'), 'people 只给了名字、没给编号')
+})

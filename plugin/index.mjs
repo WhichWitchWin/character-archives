@@ -54,7 +54,7 @@ import { pruneFutureFlags } from './lib/rollback.js'
 import { inheritGameState } from './lib/forkInherit.js'
 import { retryRefusal, retrySummary } from './lib/retryWriteback.js'
 import { dropCognitions, dropClaims } from './lib/batchDelete.js'
-import { PLAYER_ID, ensurePlayer, isPlayer, isPronounName } from './lib/player.js'
+import { PLAYER_ID, ensurePlayer, isPlayer, isPronounName, pickPlayerName } from './lib/player.js'
 import { fuzzyLeaveIds, markSeen } from './lib/fuzzy.js'
 import { buildRecallSection } from './lib/recallEngine.js'
 import { buildPendingRecallText, normalizeLevel, queryPerson } from './lib/recallQuery.js'
@@ -678,18 +678,20 @@ function pushDebug(state, level, message, data = undefined) {
  *   3. 空串 —— 都没有就不参与「拒建同名」，免得误伤
  */
 async function resolvePlayerName(ctx, gameId, cardKey) {
-  try {
-    if (typeof ctx.tavern.getPlayerName === 'function') {
-      const name = await ctx.tavern.getPlayerName({ gameId })
-      // 称呼就是称呼：代词（「你」）也是玩家的真名，不许偷偷改掉——
-      // 改了以后 `resolvePersonByName('你')` 就找不到主角，主视角的认知全被拒。
-      if (typeof name === 'string' && name.trim()) return name.trim()
+  const hasLiveApi = typeof ctx.tavern.getPlayerName === 'function'
+  let live = ''
+  if (hasLiveApi) {
+    try {
+      live = String((await ctx.tavern.getPlayerName({ gameId })) ?? '')
+    } catch {
+      live = ''
     }
-  } catch {
-    // 旧宿主、或本局还没初始化：走兜底
   }
-  const identity = await readIdentity(ctx, cardKey)
-  return identity.playerName
+  // **新宿主完全不碰 identity**：称呼的唯一真相源是酒馆（ADR 0054 的「按卡存」只该管人称，
+  // 不该管称呼）。读不到就返回空，让调用方保留原值——绝不拿插件按卡记的旧值顶，
+  // 那会把上一局/上一次的旧称呼写成这局的主角名（2026-11-22 实测「测试人」）。
+  const stored = hasLiveApi ? '' : (await readIdentity(ctx, cardKey)).playerName
+  return pickPlayerName({ live, stored, hasLiveApi })
 }
 
 /**
@@ -3547,8 +3549,11 @@ export function apply(ctx) {
     const nameOf = (id) => String((snapshot.p ?? []).find((person) => String(person?.[0]) === String(id))?.[2] ?? '').trim()
     return {
       ok: true,
-      // 人名只给已建档的：来源、认知都只能从这里面选（2026-11-22 定）
-      people: (snapshot.p ?? []).map((person) => String(person?.[2] ?? '').trim()).filter(Boolean),
+      // 人名只给已建档的：来源、认知都只能从这里面选（2026-11-22 定）。
+      // **带编号**：名字会变（主角尤其），面板拿编号当 value，改名之后旧选项也不会对不上。
+      people: (snapshot.p ?? [])
+        .map((person) => ({ id: String(person?.[0] ?? ''), name: String(person?.[2] ?? '').trim() }))
+        .filter((one) => one.id && one.name),
       claims: (snapshot.c ?? []).map((claim) => ({
         claimId: claim?.[0],
         personName: nameOf(claim?.[1]),

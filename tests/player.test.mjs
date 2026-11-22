@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { PLAYER_ID, ensurePlayer, isPlayer, isPronounName, playerNameOf } from '../plugin/lib/player.js'
+import { PLAYER_ID, ensurePlayer, isPlayer, isPronounName, pickPlayerName, playerNameOf } from '../plugin/lib/player.js'
 import { resolvePersonRef, validatePersonActions } from '../plugin/lib/actions.js'
 import { STATUS } from '../plugin/lib/snapshot.js'
 
@@ -164,4 +164,19 @@ test('ensurePlayer：明确拿到称呼时照常同步', () => {
   const result = ensurePlayer([P(PLAYER_ID, STATUS.PRESENT, '主角')], { name: '小s' })
   assert.equal(result.persons[0][2], '小s')
   assert.equal(result.changed, true)
+})
+
+// 2026-11-22 实测：某张卡在插件里存着旧称呼「测试人」，酒馆里早就改成「小s」；
+// 开局头两轮酒馆还没初始化称呼 → 回落到旧值 → 主角先叫「测试人」、第三轮又变「小s」。
+test('pickPlayerName：酒馆接口在、但这次读不到 → 返回空（不许拿插件旧值顶）', () => {
+  assert.equal(pickPlayerName({ live: '', stored: '测试人', hasLiveApi: true }), '')
+  assert.equal(pickPlayerName({ live: '   ', stored: '测试人', hasLiveApi: true }), '')
+})
+
+test('pickPlayerName：酒馆接口在、读到了 → 用读到的（去掉首尾空白）', () => {
+  assert.equal(pickPlayerName({ live: ' 小s ', stored: '测试人', hasLiveApi: true }), '小s')
+})
+
+test('pickPlayerName：旧宿主根本没有这个接口 → 才用插件按卡记的', () => {
+  assert.equal(pickPlayerName({ live: '', stored: '李四', hasLiveApi: false }), '李四')
 })

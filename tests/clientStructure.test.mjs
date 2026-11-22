@@ -477,6 +477,15 @@ test('补认知入口在人物层：空认知时整块也要渲染', () => {
   // 标题行要能塞东西（＋ 挂在 FoldHeader 上，不是另起一行）
   assert.ok(client.includes('extra = null'), 'FoldHeader 要支持右侧附加内容')
 })
+// 2026-11-22 实测：改过称呼之后，认知里那条「来源」下拉对不上——旧选项还在用旧名字，
+// 选下去后端按名字找不到人，就卡住了。根因是拿**名字**当 option 的 value。
+// 改成编号（`p0`）：后端 `resolvePersonByName` 本来就认编号，名字会变、编号不会。
+test('来源下拉用编号当值，不用名字（改名后旧选项不会对不上）', () => {
+  assert.ok(client.includes("String(group.source"), '来源的 value 不是编号')
+  assert.ok(client.includes('one.id'), '选项的 value 要用编号')
+  assert.ok(!client.includes('.filter((name) => name && name !== row.name)'), '还在按名字过滤选项')
+})
+
 // 拖拽只在人物行的标题行生效（2026-11-06 用户反馈）：
 // 整行可拖会让展开后在正文里选中文字也变成拖动人物。
 test('拖拽：人物行只有标题行可拖，根容器不再 draggable', () => {

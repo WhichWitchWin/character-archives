@@ -63,6 +63,23 @@ export function playerNameOf(identityName) {
 }
 
 /**
+ * 从「酒馆读到的称呼」与「插件按卡记的」里决定用哪个（纯函数，好测）。
+ *
+ * **有 `getPlayerName` 接口时以它为准，读不到就返回空串**——不要拿插件按卡记的旧值顶。
+ * 2026-11-22 实测：某张卡在插件里存着旧称呼「测试人」，酒馆里早就改成「小s」了；
+ * 开局头两轮酒馆还没初始化称呼，于是回落到旧值，主角在档案里先叫「测试人」、第三轮又变「小s」。
+ *
+ * 只有**旧宿主根本没有这个接口**时，才用插件记的值兜底。
+ *
+ * @param {{live?:string, stored?:string, hasLiveApi?:boolean}} input
+ * @returns {string} 空串表示"这一轮没拿到"，调用方要保留原值、不要覆盖
+ */
+export function pickPlayerName({ live = '', stored = '', hasLiveApi = false } = {}) {
+  if (hasLiveApi) return String(live ?? '').trim()
+  return String(stored ?? '').trim()
+}
+
+/**
  * 保证主角在人物表里，并把名字同步成身份设置里的玩家称呼。
  *
  * @param {any[][]} persons
