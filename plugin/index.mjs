@@ -614,7 +614,9 @@ function pointersToClaim(snapshot, claimId) {
 async function saveManualFree(ctx, gameId, pointers, turn) {
   const list = (pointers ?? []).filter(Boolean)
   if (!list.length) return
-  const fresh = await loadGameState(ctx, gameId)
+  // 注意参数：`loadGameState` 要的是 **tavern**（它有 readGameData），不是整份 ctx。
+  // 传错会在运行期抛 `cannot get property "readGameData" without inject`（2026-11-22 真踩过）。
+  const fresh = await loadGameState(ctx.tavern, gameId)
   fresh.flags = fresh.flags ?? {}
   fresh.flags.manualFree = markManualFree(fresh.flags.manualFree, list, turn)
   await saveGameState(ctx, gameId, fresh)

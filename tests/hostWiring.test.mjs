@@ -774,6 +774,18 @@ test('眼睛接线：召回集合走纯函数（引用错作用域会让召回�
 // 这条链最容易"静默失效"：漏一处不会报错，玩家只会觉得"我改了、它还是不念"。
 // 所以把五个人工入口、两条注入路径、六处删除全部用源码钉住。
 
+// `loadGameState(tavern, …)` 的第一个参数是 **tavern**，不是 ctx。
+// 传成 ctx 会在运行期抛 `cannot get property "readGameData" without inject`——
+// 2026-11-22 玩家在面板上写命题时真踩了（红字提示，看着像"没存上"）。
+test('接线守卫：loadGameState 的第一个参数必须是 ctx.tavern', () => {
+  assert.equal(
+    (source.match(/loadGameState\(ctx,/gu) ?? []).length,
+    0,
+    '有 loadGameState(ctx, …)：它的签名是 (tavern, gameId)，要传 ctx.tavern',
+  )
+})
+
+// 豁免接线：五个人工入口都挂标记
 test('豁免接线：五个人工入口都挂标记', () => {
   for (const handle of ['add-claim', 'add-cognition', 'update-claim', 'update-pointer', 'update-claim-words']) {
     const at = source.indexOf(`character-archives/${handle}'`)
