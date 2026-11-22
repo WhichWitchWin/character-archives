@@ -6,6 +6,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { passedWithoutBuild, validatePersonActions } from '../plugin/lib/actions.js'
+import { STATUS } from '../plugin/lib/snapshot.js'
 
 // ── 层 1：名字必须来自正文（B2 后续）──
 // 模型会给通用称谓套外壳造名字（「老头」→「蓝布夹克老头」），
@@ -27,6 +28,39 @@ test('建档：别名是模型自己拼出来的 → 拒绝整条建档', () => 
   )
   assert.equal(valid.length, 0)
   assert.match(rejected[0].reason, /别名/)
+})
+
+// ── 建档不再决定状态（2026-11-22 定）──
+// 「这个人存在」和「他在不在场」拆成两件事：建档一律落「离场」，状态只由「改状态」报。
+// 理由：手动建档默认离场，下一轮他出场时模型会再报一次建档——重复建档仍然直接拒，
+// 但状态可以走改状态救回来；模型也不用猜建档时该填什么状态。
+test('建档：模型填了状态也忽略——新建档一律落「离场」', () => {
+  const { valid, rejected } = validatePersonActions(
+    [{ 动作: '建档', 姓名: '阿七', 状态: '在场' }],
+    { persons: [], draft: {}, mainNames: [], body: '阿七推门进来。' },
+  )
+  assert.equal(rejected.length, 0)
+  assert.equal(valid.length, 1)
+  assert.equal(valid[0].type, 'create')
+  assert.equal(valid[0].status, STATUS.OFFLINE, '建档不带状态，一律离场')
+})
+
+test('建档：不带状态也照建（同样是离场）', () => {
+  const { valid } = validatePersonActions(
+    [{ 动作: '建档', 姓名: '阿七' }],
+    { persons: [], draft: {}, mainNames: [], body: '阿七推门进来。' },
+  )
+  assert.equal(valid[0].status, STATUS.OFFLINE)
+})
+
+test('重复建档：仍然直接拒（要改状态请另报「改状态」）', () => {
+  const persons = [['p2', STATUS.OFFLINE, '李天天', '']]
+  const { valid, rejected } = validatePersonActions(
+    [{ 动作: '建档', 姓名: '李天天', 状态: '在场' }],
+    { persons, draft: {}, mainNames: [], body: '李天天推门进来。' },
+  )
+  assert.equal(valid.length, 0, '同名不同人仍不支持（ROADMAP P9）')
+  assert.match(rejected[0].reason, /已经在档里/)
 })
 
 test('建档：姓名和别名都在正文里 → 通过', () => {

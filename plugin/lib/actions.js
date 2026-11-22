@@ -304,12 +304,17 @@ export function validatePersonActions(actions, {
         reject(action, `与主角同名，拒绝建档：${name}`)
         continue
       }
-      // 撞名一律拒绝：**同名不同人这一版不支持**（ROADMAP P9）
+      // 撞名一律拒绝：**同名不同人这一版不支持**（ROADMAP P9）。
+      // 注意：这里拒掉不影响他的状态——状态由「改状态」单独报，见下面那条。
       if (findExisting(list, name)) {
         reject(action, `已经在档里了（同名暂不支持）：${name}`)
         continue
       }
-      const status = STATUS_MAP[action?.状态] ?? STATUS.PRESENT
+      // **建档不决定状态**：新建档一律落「离场」，在场/离场只能由「改状态」报（2026-11-22 定）。
+      // 为什么拆开：手动建档默认离场，下一轮他在正文里出场时模型会再报一次建档；
+      // 若建档也带状态，重复建档被拒时状态就一起丢了，他永远回不了在场组。
+      // 拆开后「这个人存在」与「他在不在场」各有唯一出口，模型也不用猜该填什么。
+      const status = STATUS.OFFLINE
       const rawAliases = splitAliases(action?.别名)
       const checked = checkAliases({ name, rawAliases, list, mains })
       // 别名也要查符号（逗号是分隔符，拆分时已经去掉了）

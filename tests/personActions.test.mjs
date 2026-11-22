@@ -18,8 +18,11 @@ test('建档：姓名必填，别名可以不给', () => {
   assert.deepEqual(valid[0].aliases, [])
 })
 
-test('建档：状态默认在场，写「离场」就是离场', () => {
-  assert.equal(run([{ 动作: '建档', 姓名: '沈九' }]).valid[0].status, 1)
+test('建档：不决定状态，一律落「离场」（状态只由改状态报）', () => {
+  // 2026-11-22 定：建档只管"这个人存在"，在场/离场只由「改状态」报。
+  // 模型填了状态也不认——它要是想让他当场在场，就得另报一条改状态。
+  assert.equal(run([{ 动作: '建档', 姓名: '沈九' }]).valid[0].status, 0)
+  assert.equal(run([{ 动作: '建档', 姓名: '沈九', 状态: '在场' }]).valid[0].status, 0, '填了也不认')
   assert.equal(run([{ 动作: '建档', 姓名: '沈九', 状态: '离场' }]).valid[0].status, 0)
 })
 
@@ -98,7 +101,8 @@ test('应用：建档分配新编号、别名进召回词串，不改原数组',
 
   assert.equal(persons.length, 1)                 // 原数组不动
   assert.equal(result.persons.length, 2)
-  assert.deepEqual(result.persons[1], ['p8', 1, '沈九', '九爷'])
+  // 状态位是 0（离场）：建档不决定状态，要让他当场在场得另报改状态（2026-11-22）
+  assert.deepEqual(result.persons[1], ['p8', 0, '沈九', '九爷'])
   assert.deepEqual(result.created, ['p8'])
 })
 
