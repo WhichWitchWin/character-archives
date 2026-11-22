@@ -682,3 +682,15 @@ test('锁定接线：浏览器侧栏目行 / 值行 / 认知行都有小锁按�
   assert.ok(client.includes("field: 'lockEntry'"), '栏目行没接 lockEntry')
   assert.equal((client.match(/field: 'lockClaim'/g) ?? []).length, 2, '值行与认知行都要接 lockClaim')
 })
+
+// 命题 id 是「最大值+1」，会复用：回退后不过滤就会把锁错到新命题上；删命题时不清锁同理。
+test('锁定接线：值锁按当前快照过滤 + 删命题时同步清锁', () => {
+  assert.ok(source.includes('existingClaimIds'), '值锁要按当前快照过滤（回退后 id 会复用）')
+  // 当前快照那份面板要传真实值锁；历史快照视图必须传空（旧轮的命题 id 不是同一套）
+  const panelHits = lines.filter((line) => line.includes('lockClaims: state.flags?.lockClaims')).length
+  assert.ok(panelHits >= 1, `当前快照面板要传 lockClaims，实际 ${panelHits}`)
+  assert.ok(source.includes('lockClaims: {},'), '历史快照视图不能用当前值锁（会标错行）')
+  // 删单条 / 批量删 / 撤回 / 孤儿清理 各一处调用
+  const drops = (source.match(/dropClaimLocks\(/g) ?? []).length
+  assert.ok(drops >= 4, `删命题的每条路都要清锁，实际 ${drops} 处`)
+})

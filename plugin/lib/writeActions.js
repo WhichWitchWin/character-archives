@@ -112,8 +112,8 @@ export function applyWriteActions({
       continue
     }
 
-    // 值锁（M5-6）：命中已有的、被锁住的那条命题就丢。
-    // 必须在 findOrCreateClaim **之前**判——否则它会先新建一条再被丢弃，留下零指针孤儿命题。
+    // 值锁（M5-6）：只要这次写入会落到一条已锁的命题上就丢。
+    // 用与 findOrCreateClaim 同一套匹配（精确 + 宽松）：标点差异不算"新值"，不能靠它绕开锁。
     const existing =
       findClaim(snapshot.c, { personId: aboutId, code, text }) ??
       findClaimLoose(snapshot.c, { personId: aboutId, code, text, keyOf: textKey })

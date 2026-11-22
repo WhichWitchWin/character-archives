@@ -59,3 +59,27 @@ export function toggleFlag(bucket, key) {
   bucket[key] = true
   return true
 }
+
+/**
+ * 命题被**真正删掉**时，把它号的锁一并清掉。
+ *
+ * 为什么必须清：`nextClaimId` 是「当前最大值 + 1」，删掉最大号之后新命题会拿到同一个号。
+ * 留着旧号的锁，玩家会看到一条从没锁过的值莫名其妙显示 🔒、模型也写不进去。
+ * 回退**不走这里**（回退时会话回到旧轮，那个号在那条时间线上还存在），
+ * 靠调用方按当前快照过滤锁桶即可——这样回到那条线时锁会自动恢复。
+ *
+ * @returns {{bucket:object, dropped:number}}
+ */
+export function dropClaimLocks(bucket, claimIds) {
+  const ids = new Set((Array.isArray(claimIds) ? claimIds : [claimIds]).map((id) => String(id)))
+  const next = {}
+  let dropped = 0
+  for (const [key, value] of Object.entries(bucket ?? {})) {
+    if (ids.has(String(key))) {
+      dropped += 1
+      continue
+    }
+    next[key] = value
+  }
+  return { bucket: next, dropped }
+}

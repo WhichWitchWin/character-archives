@@ -286,3 +286,16 @@ test('人物锁：他的整本档案都写不进去（不允许子比父宽）',
   assert.match(result.bad[0].reason, /锁/)
   assert.equal(snapshot.c.length, 0)
 })
+
+// 标点差异不算"新值"：宽松匹配能命中，就不能靠改个句号绕开锁、另建一条
+test('值锁：宽松匹配（标点差异）也拦得住', () => {
+  const snapshot = { c: [[1, 'p7', 'a', '在旧港。', 3, [], 0]], pt: [] }
+  const result = run(
+    snapshot,
+    [{ 关于: '老陈', 栏目: '位置', 值: '在旧港', 认知: [] }],
+    { locks: { lock: {}, lockEntries: {}, lockClaims: { 1: true } } },
+  )
+  assert.equal(result.bad.length, 1)
+  assert.match(result.bad[0].reason, /锁/)
+  assert.equal(snapshot.c.length, 1, '不能因为标点不同就新建一条绕开锁')
+})

@@ -17,6 +17,7 @@ import {
   isClaimLocked,
   lockReasonFor,
   toggleFlag,
+  dropClaimLocks,
 } from '../plugin/lib/locks.js'
 
 const NONE = { lock: {}, lockEntries: {}, lockClaims: {} }
@@ -80,4 +81,17 @@ test('缺字段的老整局数据当作没锁（不炸）', () => {
   assert.equal(isEntryLocked(bare, { personId: 'p7', code: 'a' }), true)
   assert.equal(isClaimLocked(bare, { claimId: 12, ownerId: 'p8' }), false)
   assert.equal(lockReasonFor(undefined, { personId: 'p7', code: 'a', claimId: 12 }), null)
+})
+
+// 命题 id 是「最大值+1」，删掉最大号之后新命题会拿到同一个号——
+// 所以删命题时不清锁，玩家会看到一条从没锁过的值莫名其妙显示 🔒。
+test('dropClaimLocks：删命题时把它的号一并清掉', () => {
+  const { bucket, dropped } = dropClaimLocks({ 12: true, 13: true }, [12])
+  assert.equal(dropped, 1)
+  assert.deepEqual(bucket, { 13: true })
+})
+
+test('dropClaimLocks：字符串号 / 数字号都认，空桶不炸', () => {
+  assert.deepEqual(dropClaimLocks({ '12': true }, ['12']).bucket, {})
+  assert.deepEqual(dropClaimLocks(undefined, [1]).bucket, {})
 })

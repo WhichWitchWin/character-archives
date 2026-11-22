@@ -555,8 +555,9 @@ window.__ModuleLoader__.load({
         'button',
         {
           onClick: onToggle,
-          // 被人物锁压住时点它没有意义（子比父宽不成立），直接禁用比"点了没反应"好
-          disabled: disabled || lockedBy === 'person',
+          // 被上层锁压住时点它没有意义（不允许子比父宽）：person 要解人物锁、entry 要解栏目锁，
+          // 直接禁用比"点了没反应、还偷偷写了一条 lockClaims"好
+          disabled: disabled || lockedBy === 'person' || lockedBy === 'entry',
           title: tip,
           style: { ...iconBtn, fontSize: font.xxs, padding: '0 3px', lineHeight: '14px' },
         },

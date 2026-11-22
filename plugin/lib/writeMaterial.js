@@ -67,9 +67,13 @@ export function buildWriteMaterial({
   const result = { people: [], mentioned: [], seqMap, seqOf }
 
   // 锁住的条目/值不进素材（M5-6）：列了也不能写，纯烧 token，还会让模型交一堆注定被丢弃的动作。
-  // 条目锁按「命题所属人 + 栏目」判——别人要给它加认知，动作里的「关于」也得报那个人，同样会被拦。
+  // **三层都要判**：只判值锁与条目锁时，别人素材里仍会列出「被人物锁的人」的命题——
+  // 写入虽然会被拦住，但同样是白烧 token。
+  // 命题 id 两侧口径统一按字符串比（素材侧原来用数字 Set，遇到字符串 id 会漏过滤）。
+  const lockedClaimIds = lockedClaims ? new Set([...lockedClaims].map((id) => String(id))) : null
   const lockedRow = (claim) =>
-    (lockedClaims && lockedClaims.has(claim[0])) ||
+    (locked && locked.has(claim[1])) ||
+    (lockedClaimIds && lockedClaimIds.has(String(claim[0]))) ||
     (lockedEntries && lockedEntries.has(entryLockKey(claim[1], claim[2])))
 
   // 这个人哪几栏锁着：交给 followup 拼素材时排除掉，别把它列进「这些栏目还空着」。

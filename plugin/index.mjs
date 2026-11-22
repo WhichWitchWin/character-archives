@@ -25,7 +25,7 @@ import { mergeSettings, resolveSettings, splitSettings } from './lib/settings.js
 import { properNounsOf, wordsOfClaim, filterIndexWords, withClaimWords, configureWordSegmenter } from './lib/indexWords.js'
 import { buildWriteMaterial } from './lib/writeMaterial.js'
 import { applyWriteActions } from './lib/writeActions.js'
-import { entryLockKey, toggleFlag } from './lib/locks.js'
+import { entryLockKey, toggleFlag, dropClaimLocks } from './lib/locks.js'
 import { addGlobalWords, globalWordList, normalizeGlobalWords } from './lib/globalWords.js'
 import { matchText } from './lib/match.js'
 import { splitAliases, namesOfPerson } from './lib/names.js'
@@ -1058,7 +1058,13 @@ async function runWriteback(ctx, state, { gameId, turn, text, textVersion, setti
   )
   // 条目锁 / 值锁（M5-6）：与人物锁一样存整局数据。三只桶交给 lib/locks.js 统一判定。
   const lockEntries = state.flags?.lockEntries ?? {}
-  const lockClaims = state.flags?.lockClaims ?? {}
+  // 值锁必须按「当前快照里真实存在的命题」过滤：命题 id 是「最大值+1」，回退之后旧号可能
+  // 已经不存在，而新命题会重新拿到这个号——不过滤就会把锁错到一条从没锁过的值上。
+  // 只过滤内存、不动存储：回到那条时间线时 id 又存在了，锁会自动恢复。
+  const existingClaimIds = new Set((Array.isArray(snapshot.c) ? snapshot.c : []).map((claim) => String(claim?.[0])))
+  const lockClaims = Object.fromEntries(
+    Object.entries(state.flags?.lockClaims ?? {}).filter(([key]) => existingClaimIds.has(String(key))),
+  )
   const locks = { lock: state.flags?.lock ?? {}, lockEntries, lockClaims }
   // 素材过滤用集合版（值锁的键是命题 id，转成数字才和 claim[0] 比得上）
   const lockedEntrySet = new Set(Object.keys(lockEntries).filter((key) => lockEntries[key] === true))
@@ -1382,7 +1388,12 @@ async function runWriteback(ctx, state, { gameId, turn, text, textVersion, setti
       const nameOfId = (id) => String(snapshot.p.find((person) => person?.[0] === id)?.[2] ?? id ?? '?')
       // 命题 id 会被复用：连带清掉这次被清掉的命题的冷却（见 cooldown.js 的 dropClaimCooldowns）
       for (const item of retraction.applied) {
-        if (item.droppedClaim) state.cooldowns = dropClaimCooldowns(state.cooldowns, item.claimId)
+        if (!item.droppedClaim) continue
+        state.cooldowns = dropClaimCooldowns(state.cooldowns, item.claimId)
+        // 命题 id 会被复用（nextClaimId = 最大+1），锁也得跟着清，否则新命题会继承旧号的锁（ADR 0113）
+        const { bucket } = dropClaimLocks(state.flags?.lockClaims, [item.claimId])
+        state.flags = state.flags ?? {}
+        state.flags.lockClaims = bucket
       }
       pushDebug(state, 'info', `撤回 ${retraction.applied.length} 条认知`, {
         // 谁 → 关于谁 · 命题内容：命题说的是谁由程序按序号查（ADR 0106），
@@ -1450,6 +1461,12 @@ async function runWriteback(ctx, state, { gameId, turn, text, textVersion, setti
     // 留着旧号的冷却会压住将来恰好拿到同号的新命题（见 cooldown.js 的 dropClaimCooldowns）
     for (const claimId of orphans.removed) {
       state.cooldowns = dropClaimCooldowns(state.cooldowns, claimId)
+    }
+    // 同理（ADR 0113）：这些号会被将来新建的命题复用，留着锁就会锁错新值
+    {
+      const { bucket } = dropClaimLocks(state.flags?.lockClaims, orphans.removed)
+      state.flags = state.flags ?? {}
+      state.flags.lockClaims = bucket
     }
     pushDebug(state, 'info', `孤儿命题清掉 ${orphans.removed.length} 条`, { id: orphans.removed.slice(0, 10) })
   }
@@ -2846,7 +2863,9 @@ export function apply(ctx) {
       checkedCodes,
       lock: state.flags?.lock ?? {},
       lockEntries: state.flags?.lockEntries ?? {},
-      lockClaims: state.flags?.lockClaims ?? {},
+      // 历史快照里的命题 id 跟当前快照不是一套（回退/删除后号会复用）：
+      // 拿当前的值锁去标会标错行，所以历史视图只显示人物锁与条目锁
+      lockClaims: {},
       hidden: state.flags?.hidden ?? {},
       seen: state.flags?.seen ?? {},
       fuzzyLeft: state.flags?.fuzzyLeft ?? {},
@@ -3286,8 +3305,13 @@ export function apply(ctx) {
     // 命题 id 会被复用，留着这个号的冷却会压住将来同号的新命题（见 cooldown.js）
     const state = await loadGameState(ctx.tavern, gameId)
     const cleanedCooldowns = dropClaimCooldowns(state.cooldowns, id)
-    if (Object.keys(cleanedCooldowns).length !== Object.keys(state.cooldowns ?? {}).length) {
+    const cooldownChanged = Object.keys(cleanedCooldowns).length !== Object.keys(state.cooldowns ?? {}).length
+    // 命题 id 会被复用，锁也要跟着清（ADR 0113）——不清的话新命题会继承旧号的锁
+    const { bucket: lockBucket, dropped: locksDropped } = dropClaimLocks(state.flags?.lockClaims, [id])
+    if (cooldownChanged || locksDropped) {
       state.cooldowns = cleanedCooldowns
+      state.flags = state.flags ?? {}
+      state.flags.lockClaims = lockBucket
       await saveGameState(ctx, gameId, state)
     }
 
@@ -3349,12 +3373,15 @@ export function apply(ctx) {
     const { removedClaims, removedPointers } = dropClaims({ claims: snapshot.c, pointers: snapshot.pt, ids })
     if (!removedClaims.length) return { ok: false, reason: '一条都没找到（可能已经被删过）' }
 
-    // 冷却按删掉的每个命题号各清一次，再统一落盘
+    // 冷却按删掉的每个命题号各清一次；锁同样要清（id 会复用，ADR 0113），再统一落盘
     const state = await loadGameState(ctx.tavern, gameId)
     let cooldowns = state.cooldowns ?? {}
     for (const claimId of removedClaims) cooldowns = dropClaimCooldowns(cooldowns, claimId)
-    if (Object.keys(cooldowns).length !== Object.keys(state.cooldowns ?? {}).length) {
+    const { bucket: lockBucket, dropped: locksDropped } = dropClaimLocks(state.flags?.lockClaims, removedClaims)
+    if (Object.keys(cooldowns).length !== Object.keys(state.cooldowns ?? {}).length || locksDropped) {
       state.cooldowns = cooldowns
+      state.flags = state.flags ?? {}
+      state.flags.lockClaims = lockBucket
       await saveGameState(ctx, gameId, state)
     }
 
