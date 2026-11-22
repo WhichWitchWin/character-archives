@@ -318,7 +318,13 @@ test('恢复默认：三段都回到 assets 里的当前版本', async () => {
   assert.equal(restored.recall, assets.recall)
 })
 
-test('默认召回模板带「认知不是客观真相」那段说明（手改版已定为默认）', () => {
-  assert.ok(DEFAULT_TEMPLATES.recall.includes('不是剧情本身'))
+test('默认召回模板说清「这是谁记得的事」与「关于谁」（2026-11-22 重写）', () => {
   assert.ok(DEFAULT_TEMPLATES.recall.includes('不是客观真相'))
+  assert.ok(DEFAULT_TEMPLATES.recall.includes('不是剧情'))
+  // 关键：说明「▍名字＝谁记得」和「行首有没有名字＝说的是谁」。
+  // 原来只说「是已建档人物自己知道的事」，模型把「▍老陈 / · 演员：真」读成「老陈是演员」。
+  assert.ok(DEFAULT_TEMPLATES.recall.includes('这是谁的记忆'), '没写清块头是谁的记忆')
+  assert.ok(DEFAULT_TEMPLATES.recall.includes('说的是**他自己**'), '没写清"行首没名字"是什么意思')
+  assert.ok(DEFAULT_TEMPLATES.recall.includes('说的是**那个人**'), '没写清"行首有名字"是什么意思')
+  assert.ok(DEFAULT_TEMPLATES.recall.includes('没被列出来不等于他不知道'), '没兜住"没列出＝不知道"的误判')
 })
