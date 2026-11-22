@@ -251,7 +251,7 @@ test('窄面板：两块可折叠，标题行带 ▸/▾ 和条数，默认展�
   assert.match(view, /const \[openCognitions, setOpenCognitions\] = useState\(true\)/, '「他的认知」默认展开')
   // 收起时只留标题行：两块的内容都要挂在 open 判断后面
   assert.match(view, /openAbout\s*\?\s*[\s\S]{0,40}row\.aboutColumns\.map/, '收起时不该还画「他是什么样」的栏目')
-  assert.match(view, /openCognitions\s*\?\s*[\s\S]{0,40}row\.cognitionColumns\.map/, '收起时不该还画「他的认知」的栏目')
+  assert.match(view, /openCognitions && row\.cognitionColumns\?\.length\s*\?\s*row\.cognitionColumns\.map/u, '收起时不该还画「他的认知」的栏目')
   // hook 要在任何 return 之前
   const detail = view.slice(view.indexOf('function DetailBlock'))
   assertHooksBeforeReturns(detail, ['const [openAbout, setOpenAbout]', 'const [openColumns, setOpenColumns]'], 'DetailBlock')
@@ -459,6 +459,24 @@ test('锁/眼按钮：不许自己判「被上层压住」，只读服务端给�
   }
 })
 
+// 2026-11-22 用户实测：一个人还没有任何认知时，「他的认知」整块不渲染，
+// 于是**没有任何入口补第一条认知**（每栏的 ＋ 只在"已经有内容的栏目"上才出现）。
+// 改法：把补认知入口提到人物层（标题行一个 ＋），并且空的时候整块也要露面。
+test('补认知入口在人物层：空认知时整块也要渲染', () => {
+  // 不许再挂「有认知栏目才画这块」的短路
+  assert.ok(
+    !client.includes("browse === 'cognitions' && row.cognitionColumns?.length"),
+    '整块还挂在「有栏目才画」上，空人物就没入口',
+  )
+  // 标题行那个 ＋ 用 '*' 表示「给这个人补」，跟栏目码区分开
+  assert.ok(client.includes("pickFor === '*'"), "标题行的 ＋ 没接 pickFor='*'")
+  // 每栏的 ＋ 要撤掉：整个文件只该剩标题行那一个
+  assert.equal((client.match(/key: 'add-cog'/g) ?? []).length, 1, '每栏的 ＋ 还在（应该只在人物层留一个）')
+  // 空的时候给一句话，别让玩家以为面板坏了
+  assert.ok(client.includes('还没有任何认知'), '空认知时要有提示')
+  // 标题行要能塞东西（＋ 挂在 FoldHeader 上，不是另起一行）
+  assert.ok(client.includes('extra = null'), 'FoldHeader 要支持右侧附加内容')
+})
 // 拖拽只在人物行的标题行生效（2026-11-06 用户反馈）：
 // 整行可拖会让展开后在正文里选中文字也变成拖动人物。
 test('拖拽：人物行只有标题行可拖，根容器不再 draggable', () => {

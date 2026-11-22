@@ -435,7 +435,7 @@ window.__ModuleLoader__.load({
     // 可折叠小标题：▸/▾ + 「标题 · N 条」。
     // 展开状态由**调用方**持有——hook 只能写在组件最前面，藏进这里就会跟着条数变，
     // React 直接抛 #300（hook 数量对不上），整个面板白屏。
-    function FoldHeader({ open, title, count, onToggle }) {
+    function FoldHeader({ open, title, count, onToggle, extra = null }) {
       return h(
         'div',
         {
@@ -445,6 +445,8 @@ window.__ModuleLoader__.load({
         },
         h('span', { style: { ...muted, width: 10 } }, open ? '▾' : '▸'),
         h('span', null, `${title} · ${count} 条`),
+        // 右侧附加内容——「他的认知」标题行上那个 ＋ 就挂这儿（别另起一行）
+        extra,
       )
     }
 
@@ -1030,8 +1032,10 @@ window.__ModuleLoader__.load({
               )
             : null,
           // 他的认知（指针）：按**命题的栏目**分组——「他认为周砚的职业是画师」落在「职业」下面。
-          // 只列有内容的栏目：认知视角不补空。
-          browse === 'cognitions' && row.cognitionColumns?.length
+          // 只列有内容的栏目（认知视角不补空），但**整块无条件画**：一条认知都没有时也得有入口，
+          // 否则新建的人永远补不了第一条（2026-11-22 用户实测）。
+          // 补认知的入口放在**人物层**（标题行的 ＋），不按栏目分——归哪一栏由命题自己决定。
+          browse === 'cognitions'
             ? h(
                 'div',
                 { style: { flex: '1 1 240px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 } },
@@ -1040,8 +1044,42 @@ window.__ModuleLoader__.load({
                   title: '他的认知',
                   count: cognitionCount,
                   onToggle: () => setOpenCognitions((value) => !value),
+                  extra: h('button', {
+                    key: 'add-cog',
+                    onClick: (event) => {
+                      event.stopPropagation()
+                      setPickFor(pickFor === '*' ? '' : '*')
+                    },
+                    disabled: Boolean(busy) || !catalog.claims.length,
+                    title: catalog.claims.length
+                      ? '补一条认知：只能从已有命题里选（不新写内容）'
+                      : '档案里还没有命题，先去「他是什么样」加一条',
+                    style: { ...iconBtn, fontSize: font.xxs, padding: '0 3px', lineHeight: '14px', marginLeft: 'auto' },
+                  }, '＋'),
                 }),
-                openCognitions ? row.cognitionColumns.map((col, index) => {
+                // 挑命题的下拉：挂在人物层，与栏目无关
+                pickFor === '*'
+                  ? h('select', {
+                      key: 'pick-any',
+                      defaultValue: '',
+                      onChange: (event) => {
+                        const id = Number(event.target.value)
+                        if (!id) return
+                        call('add-cognition', { personId: row.id, claimId: id }, '认知已加')
+                        setPickFor('')
+                      },
+                      style: { fontSize: font.xxs, maxWidth: 320, marginLeft: '1.8em' },
+                    }, [
+                      h('option', { key: 'none', value: '' }, '选一条已有命题…'),
+                      ...catalog.claims.map((claim) =>
+                        h('option', { key: claim.claimId, value: String(claim.claimId) },
+                          `${claim.personName} · ${claim.columnName}：${claim.text}`)),
+                    ])
+                  : null,
+                openCognitions && !row.cognitionColumns?.length
+                  ? h('div', { style: { ...muted, fontStyle: 'italic', paddingLeft: '1.8em' } }, '还没有任何认知，点上面的 ＋ 补一条')
+                  : null,
+                openCognitions && row.cognitionColumns?.length ? row.cognitionColumns.map((col, index) => {
                   const expanded = openColumns.has(col.code)
                   const colOpen = openCols.has(col.code)
                   // 跟「他是什么样」同一套两级版式（2026-11-22 用户定）：名字一行、值缩进、双色交替
@@ -1082,40 +1120,8 @@ window.__ModuleLoader__.load({
                             call('toggle', { personId: row.id, field: 'hideEntry', code: col.code }, '已切换栏目可见性')
                           },
                         }),
-                        // 补一条认知（ADR 0116）：只能从**已有命题**里选，不在这里新造内容。
-                        // 下拉**不受栏目收起影响**：它属于「加东西」，不是「看东西」
-                        h('button', {
-                          key: `add-cog-${col.code}`,
-                          onClick: (event) => {
-                            event.stopPropagation()
-                            setPickFor(pickFor === col.code ? '' : col.code)
-                          },
-                          disabled: Boolean(busy) || !catalog.claims.length,
-                          title: catalog.claims.length
-                            ? '补一条认知：只能从已有命题里选（不新写内容）'
-                            : '档案里还没有命题，先去「他是什么样」加一条',
-                          style: { ...iconBtn, fontSize: font.xxs, padding: '0 3px', lineHeight: '14px' },
-                        }, '＋'),
                       ),
                     ),
-                    pickFor === col.code
-                      ? h('select', {
-                          key: `pick-${col.code}`,
-                          defaultValue: '',
-                          onChange: (event) => {
-                            const id = Number(event.target.value)
-                            if (!id) return
-                            call('add-cognition', { personId: row.id, claimId: id }, '认知已加')
-                            setPickFor('')
-                          },
-                          style: { fontSize: font.xxs, maxWidth: 320, marginLeft: '1.8em' },
-                        }, [
-                          h('option', { key: 'none', value: '' }, '选一条已有命题…'),
-                          ...catalog.claims.map((claim) =>
-                            h('option', { key: claim.claimId, value: String(claim.claimId) },
-                              `${claim.personName} · ${claim.columnName}：${claim.text}`)),
-                        ])
-                      : null,
                     // 值：缩进一级。收起时整段不画
                     colOpen
                       ? h(
