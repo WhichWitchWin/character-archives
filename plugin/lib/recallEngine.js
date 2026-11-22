@@ -114,6 +114,7 @@ export function buildRecallSection({
   budget = 3000,
   playerBack = null,
   viewpoint = '主角',
+  playerName = '',
   text = '',
   deletedNames = new Set(),
   template = undefined,
@@ -140,7 +141,11 @@ export function buildRecallSection({
   for (const claim of claims) {
     if (Array.isArray(claim)) claimById.set(claim[0], claim)
   }
-  const nameOf = (id) => String(personById.get(String(id))?.[2] ?? '').trim()
+  // 主角名跟**当前称呼**走（ADR 0122）：快照里那份可能是第一轮占位「主角」。
+  // 传了 live 名就覆盖 p0，别让提示词里叫「主角」、面板里叫「小s」（评审 2026-11-22）。
+  const nameOf = (id) => String(id) === 'p0' && playerName
+    ? playerName
+    : String(personById.get(String(id))?.[2] ?? '').trim()
 
   const presentIdSet = new Set(
     people.filter((person) => Array.isArray(person) && person[1] === STATUS.PRESENT).map((person) => String(person[0])),

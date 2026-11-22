@@ -75,6 +75,7 @@ export function queryPerson({
   turn = 0,
   skip = null,
   cognition = undefined,
+  playerName = '',
 } = {}) {
   const people = Array.isArray(snapshot?.p) ? snapshot.p : []
   const claims = Array.isArray(snapshot?.c) ? snapshot.c : []
@@ -89,8 +90,13 @@ export function queryPerson({
   }
 
   const person = people.find((item) => Array.isArray(item) && String(item[0]) === foundId)
-  const personName = String(person?.[2] ?? '').trim()
-  const nameOf = (id) => String(people.find((item) => String(item?.[0]) === String(id))?.[2] ?? '').trim()
+  const personName = foundId === 'p0' && playerName
+    ? playerName
+    : String(person?.[2] ?? '').trim()
+  // 主角名跟当前称呼走（ADR 0122）；块头与来源描述都用它
+  const nameOf = (id) => String(id) === 'p0' && playerName
+    ? playerName
+    : String(people.find((item) => String(item?.[0]) === String(id))?.[2] ?? '').trim()
   const claimById = new Map()
   for (const claim of claims) if (Array.isArray(claim)) claimById.set(claim[0], claim)
 
@@ -197,6 +203,7 @@ export function buildPendingRecallText({
   turn = 0,
   skip = null,
   cognition = undefined,
+  playerName = '',
 } = {}) {
   const seen = new Set()
   const blocks = []
@@ -227,6 +234,7 @@ export function buildPendingRecallText({
       turn,
       skip,
       cognition,
+      playerName,
     })
     // 无效的标记不管这次有没有给出内容，都报上去清掉
     for (const key of result.manualFreeStale ?? []) staleFree.add(key)

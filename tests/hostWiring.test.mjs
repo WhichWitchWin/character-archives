@@ -51,8 +51,14 @@ test('主角姓名与玩家称呼双向同步', () => {
   }
 
   const setNames = bodyOfHandle('set-names')
-  assert.ok(setNames.some((line) => line.includes('saveIdentity(')), '改主角姓名要写回身份设置')
+  // ADR 0122：主角名字的唯一真相源是**酒馆**。改主角名必须写回 `setPlayerName`，
+  // 只写插件那份没用（下一轮 ensurePlayer 会按酒馆的名字冲回去，评审 2026-11-22 抓到）。
+  assert.ok(setNames.some((line) => line.includes('setPlayerName(')), '改主角姓名要写回酒馆的玩家称呼')
+  assert.ok(!setNames.some((line) => line.includes('saveIdentity(')), '别再往按卡的身份设置里写称呼')
   assert.ok(setNames.some((line) => line.includes('keepOldName')), '主角改名要把旧称呼进别名')
+
+  const rename = bodyOfHandle('rename-person')
+  assert.ok(rename.some((line) => line.includes('setPlayerName(')), 'rename-person 改主角也要写回酒馆')
 
   const setIdentity = bodyOfHandle('set-identity')
   assert.ok(setIdentity.some((line) => line.includes('setPersonNames(')), '改玩家称呼要同步快照里的 p0')

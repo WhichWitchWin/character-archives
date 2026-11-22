@@ -430,6 +430,12 @@ test('批量选择只算看得见的行：收起的栏目不算', () => {
     const block = detail.slice(from, nextAt > from ? nextAt : from + 400)
     assert.ok(block.includes('filter((col) => openCols.has(col.code))'), `${order[i]} 没排除收起的栏目`)
   }
+
+  // 「全选」按钮必须也用这份可见列表（评审 2026-11-22 抓到：原来另有 allClaimIds/allCogIds
+  // 直接摊平全部栏目，默认全收起时全选会选中玩家根本没看见的行，删掉就是误删）。
+  assert.ok(!/\ballClaimIds\b|\ballCogIds\b/u.test(detail), '还有一份不带折叠过滤的 all*Ids（全选会误删看不见的行）')
+  assert.ok(detail.includes('pickAll(setPickedClaims, visibleClaimIds)'), '全选命题没用可见列表')
+  assert.ok(detail.includes('pickAll(setPickedCogs, visibleCogIds)'), '全选认知没用可见列表')
 })
 
 // 2026-11-22 用户实测「锁上之后解不开」。根因：按钮自己拿 `lockedBy === 'entry'` 判

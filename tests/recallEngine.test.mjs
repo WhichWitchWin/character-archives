@@ -393,12 +393,13 @@ test('注入写明「关于谁」：别人的事带人名，自己的事不带',
 
 test('注入写明「关于谁」：主角回场那段也要带', () => {
   const snapshot = {
-    p: [person('p0', 1, '小s'), person('p2', 1, '周可人')],
+    p: [person('p0', 1, '你'), person('p2', 1, '周可人')],
     c: [claim(1, 'p2', 'a', '演员')],
     pt: [pointer('p0', 1)],   // 小s 记得周可人是演员
   }
-  const { text } = buildRecallSection({ ...base, snapshot, playerBack: 5 })
+  const { text } = buildRecallSection({ ...base, snapshot, playerBack: 5, playerName: '小s' })
   assert.ok(text.includes('· 周可人 · 演员'), '主角回场那段同样要写明关于谁')
+  assert.ok(text.includes('▍小s'), '块头要用当前称呼，不是快照里的占位名「你」')
 })
 
 // 预算不够时被砍掉的块：标记不能算"用掉"（那条其实没进提示词，删了就白改）

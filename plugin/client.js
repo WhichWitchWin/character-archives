@@ -680,8 +680,8 @@ window.__ModuleLoader__.load({
         else next.add(key)
         return next
       })
-      const allClaimIds = (row.aboutColumns ?? []).flatMap((col) => (col.claims ?? []).map((one) => String(one.claimId)))
-      const allCogIds = (row.cognitionColumns ?? []).flatMap((col) => (col.items ?? []).map((one) => String(one.claimId)))
+      // 「全选」用的是下面那份**看得见的行**（`visibleClaimIds` / `visibleCogIds`）：
+      // 默认全收起时，收起的栏目里那些行玩家根本没看见，全选 + 删除会误删（评审 2026-11-22 抓到）
       // 一次请求删一批：后端一次读快照、一次落盘（逐条调会写 N 次文件，中途失败还会删一半）
       const batchDelete = async (handle, payload, doneText) => {
         setBusy('删除中…')
@@ -809,15 +809,15 @@ window.__ModuleLoader__.load({
           multi ? h('span', { style: muted }, 'Shift + 点选可连选一段') : null,
           multi
             ? h('button', {
-                onClick: () => pickAll(setPickedClaims, allClaimIds),
+                onClick: () => pickAll(setPickedClaims, visibleClaimIds),
                 style: { ...iconBtn, fontSize: font.xxs },
-              }, `全选命题（${allClaimIds.length}）`)
+              }, `全选命题（${visibleClaimIds.length}）`)
             : null,
           multi
             ? h('button', {
-                onClick: () => pickAll(setPickedCogs, allCogIds),
+                onClick: () => pickAll(setPickedCogs, visibleCogIds),
                 style: { ...iconBtn, fontSize: font.xxs },
-              }, `全选认知（${allCogIds.length}）`)
+              }, `全选认知（${visibleCogIds.length}）`)
             : null,
           multi
             ? h('button', {

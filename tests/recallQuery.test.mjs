@@ -213,3 +213,15 @@ test('查档案写明「关于谁」：别人的事带人名，自己的事不�
   assert.ok(result.text.includes('· 小s的管家'), '关于自己的照常给')
   assert.ok(!result.text.includes('· 老陈 · 小s的管家'), '关于自己的不加前缀')
 })
+
+// 主角名跟当前称呼走（ADR 0122）：快照里存的是占位名时，查档案也该显示真名
+test('查档案：主角名用当前称呼，不用快照里的占位名', () => {
+  const snapshot = {
+    p: [person('p0', 1, '主角'), person('p2', 1, '周可人')],   // 快照里 p0 是占位名
+    c: [claim(1, 'p2', 'a', '演员')],
+    pt: [pointer('p0', 1)],
+  }
+  const result = queryPerson({ snapshot, name: '主角', playerName: '小s' })
+  assert.ok(result.text.includes('▍小s'), '块头要用真名')
+  assert.equal(result.name, '小s', '回执里的名字也要是真名')
+})

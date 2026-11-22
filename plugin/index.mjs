@@ -695,6 +695,21 @@ async function resolvePlayerName(ctx, gameId, cardKey) {
 }
 
 /**
+ * 读身份，并把称呼**同步成酒馆的真名**（ADR 0122）。
+ *
+ * `identity` / 快照里那份 `playerName` 可能是旧的（按卡时代留下的、或第一轮拿不到称呼时的占位），
+ * **只有 `getPlayerName` 是唯一真相源**。凡是"要把主角名字喂给 `ensurePlayer` 或同名守卫"的地方，
+ * 一律用这个，别再直接 `readIdentity(...).playerName`——2026-11-22 评审就是在这里抓到 6 处不一致：
+ * 面板上加条命题 / 改次状态，能把快照里的主角名改回按卡旧值并写盘。
+ */
+async function readIdentityLive(ctx, gameId, state) {
+  const cardKey = String(state?.meta?.cardKey ?? gameId)
+  const identity = await readIdentity(ctx, cardKey)
+  identity.playerName = await resolvePlayerName(ctx, gameId, cardKey)
+  return identity
+}
+
+/**
  * 第一轮结算前我们还不知道 cardKey，身份只能按 gameId 存；
  * 结算后有了真 cardKey，要把那条记录挪过去，否则玩家刚填的称呼会"消失"。
  */
@@ -1064,7 +1079,7 @@ async function runWriteback(ctx, state, { gameId, turn, text, textVersion, setti
     ? new Set(settings.checkedCodes)
     : new Set(definedCodes)
   // 身份按卡存（ADR 0054/0055）：玩家称呼决定「谁不该被建档」，人称决定提示词怎么写
-  const identity = await readIdentity(ctx, String(state.meta?.cardKey ?? gameId))
+  const identity = await readIdentityLive(ctx, gameId, state)
   identity.playerName = await resolvePlayerName(ctx, gameId, String(state.meta?.cardKey ?? gameId))
   const viewpoint = personLabel(identity.person)
   const templates = await readPrompts(ctx)
@@ -1738,6 +1753,8 @@ export function apply(ctx) {
             cooldownTurns: settings.recall?.cooldownOn ? settings.recall?.cooldownTurns : 0,
             turn,
             cognition: settings.cognition,
+            // 主角名跟当前称呼走（ADR 0122）：别让模型在档案里看到占位的「主角」
+            playerName: await resolvePlayerName(ctx, gameId, String(state.meta?.cardKey ?? gameId)),
           })
           if (!result.ok) return result.reason
 
@@ -1799,7 +1816,7 @@ export function apply(ctx) {
         }
         const snapshot = parsed.snapshot
         const settings = resolveSettings(await readScopedSettings(ctx, state))
-        const identity = await readIdentity(ctx, String(state.meta?.cardKey ?? gameId))
+        const identity = await readIdentityLive(ctx, gameId, state)
 
         // 三段提示词（面板存档优先、回落 assets/*.txt）。**必须在自己的作用域里读**：
         // `runWriteback()` 里也有一份同名变量，借那边的会 ReferenceError——
@@ -1828,6 +1845,8 @@ export function apply(ctx) {
           budget: settings.recall?.budgetChars,
           playerBack: state.flags?.playerBack ?? null,
           viewpoint: personLabel(identity.person),
+          // 主角名跟当前称呼走，别把快照里的第一轮占位名「主角」念进提示词（ADR 0122）
+          playerName: identity.playerName,
           text: String(input ?? ''),
           template: templates.recall,
           cognition: settings.cognition,
@@ -1853,6 +1872,7 @@ export function apply(ctx) {
               turn,
               skip: givenKeys,
               cognition: settings.cognition,
+              playerName: identity.playerName,
             })
           : { text: '', stamps: [], done: [], manualFreeUsed: [], manualFreeStale: [] }
 
@@ -2264,7 +2284,7 @@ export function apply(ctx) {
     const hasExisting = Boolean(parsed && !parsed.bootstrapped && parsed.snapshot.p.length > 0)
 
     // 主角名也要查：导进来的 NPC 不能顶主角的名字（否则每轮都被当成"主角被提到"）
-    const identity = await readIdentity(ctx, String(state.meta?.cardKey ?? gameId))
+    const identity = await readIdentityLive(ctx, gameId, state)
     const result = importBundle(bundle, {
       hasExisting,
       force,
@@ -2291,7 +2311,7 @@ export function apply(ctx) {
     if (gameId) {
       try {
         const state = await loadGameState(ctx.tavern, gameId)
-        const identity = await readIdentity(ctx, String(state?.meta?.cardKey ?? gameId))
+        const identity = await readIdentityLive(ctx, gameId, state)
         identity.playerName = await resolvePlayerName(ctx, gameId, String(state?.meta?.cardKey ?? gameId))
         const settings = resolveSettings(await readScopedSettings(ctx, state))
         contextText = buildContextText({
@@ -2936,7 +2956,7 @@ export function apply(ctx) {
     const turn = state.meta?.updatedTurn
     if (!Number.isInteger(turn)) {
       // 还没结算过：主角也要摆出来——他是玩家自己，不是"等模型建档的 NPC"（ADR 0085）。
-      const identity = await readIdentity(ctx, String(state?.meta?.cardKey ?? gameId))
+      const identity = await readIdentityLive(ctx, gameId, state)
       identity.playerName = await resolvePlayerName(ctx, gameId, String(state?.meta?.cardKey ?? gameId))
       const playerState = ensurePlayer([], {
         name: identity.playerName,
@@ -2969,7 +2989,7 @@ export function apply(ctx) {
 
     // 快照里没有主角（老数据、或者上轮建坏了）→ 补一个再显示。
     // 这里不落盘：面板是只读的，下一轮结算时 turnSection 会真的把他建进去。
-    const identity = await readIdentity(ctx, String(state?.meta?.cardKey ?? gameId))
+    const identity = await readIdentityLive(ctx, gameId, state)
     identity.playerName = await resolvePlayerName(ctx, gameId, String(state?.meta?.cardKey ?? gameId))
     const playerState = ensurePlayer(parsed.snapshot.p, {
       name: identity.playerName,
@@ -3086,7 +3106,7 @@ export function apply(ctx) {
 
     // 主角名从身份设置读。`settings.mainNames` 这个键压根不存在——拿它当守卫等于没守卫
     //（review 2026-11-04）；模型建档链路用的就是 identity.playerName。
-    const identity = await readIdentity(ctx, String(state.meta?.cardKey ?? gameId))
+    const identity = await readIdentityLive(ctx, gameId, state)
     const mainNames = identity.playerName ? [identity.playerName] : []
     const checked = validatePersonActions(
       [{ 动作: '建档', 姓名: name, 状态: status }],
@@ -3133,7 +3153,7 @@ export function apply(ctx) {
 
     const { snapshot } = await readSnapshotAt(ctx, gameId, turn)
 
-    const identity = await readIdentity(ctx, String(state.meta?.cardKey ?? gameId))
+    const identity = await readIdentityLive(ctx, gameId, state)
     identity.playerName = await resolvePlayerName(ctx, gameId, String(state.meta?.cardKey ?? gameId))
     // 面板上的主角是 /archive 补出来的（还没落盘）——操作前先把他真正建进快照，
     // 否则这里会报「找不到这个人」。
@@ -3157,15 +3177,25 @@ export function apply(ctx) {
     if (!updated.ok) return { ok: false, reason: updated.reason }
 
     snapshot.p = updated.persons
-    await saveSnapshot(ctx, { gameId, turn, snapshot, textVersion: await currentTextVersion(ctx, gameId, turn) })
 
-    // 主角的姓名就是「本局设置」里的玩家称呼：写回身份，否则下一轮 ensurePlayer 会把它冲回去
+    // 主角的姓名就是「本局设置」里的玩家称呼：**先写回酒馆**（唯一真相源，ADR 0122），再存快照。
+    // 只写插件那份没用——下一轮 `ensurePlayer` 会按酒馆的名字把他冲回去，面板上改了等于没改
+    //（评审 2026-11-22 抓到）。
     if (isPlayerRow) {
       const nextName = String(name ?? '').trim()
       if (nextName && nextName !== identity.playerName) {
-        await saveIdentity(ctx, String(state.meta?.cardKey ?? gameId), { ...identity, playerName: nextName })
+        if (typeof ctx.tavern.setPlayerName !== 'function') {
+          return { ok: false, reason: '这个酒馆版本不支持从面板改主角名，请去酒馆的「玩家称呼」里改' }
+        }
+        try {
+          await ctx.tavern.setPlayerName({ gameId, playerName: nextName })
+        } catch (error) {
+          return { ok: false, reason: `主角名字没能写回酒馆：${String(error?.message ?? error)}` }
+        }
       }
     }
+
+    await saveSnapshot(ctx, { gameId, turn, snapshot, textVersion: await currentTextVersion(ctx, gameId, turn) })
     return { ok: true, name: String(name ?? '').trim() }
   })
 
@@ -3182,7 +3212,7 @@ export function apply(ctx) {
     const { snapshot } = await readSnapshotAt(ctx, gameId, turn)
 
     // 主角名从身份设置读（同 /create）：settings 里没有 mainNames 这个键
-    const identity = await readIdentity(ctx, String(state.meta?.cardKey ?? gameId))
+    const identity = await readIdentityLive(ctx, gameId, state)
     identity.playerName = await resolvePlayerName(ctx, gameId, String(state.meta?.cardKey ?? gameId))
     // 同 /set-names：面板上补出来的主角要先真正建进快照，不然这里报「找不到这个人」
     const playerState = ensurePlayer(snapshot.p, {
@@ -3202,15 +3232,23 @@ export function apply(ctx) {
     if (!renamed.ok) return { ok: false, reason: renamed.reason }
 
     snapshot.p = renamed.persons
-    await saveSnapshot(ctx, { gameId, turn, snapshot, textVersion: await currentTextVersion(ctx, gameId, turn) })
 
-    // 主角的姓名就是「本局设置」里的玩家称呼：写回身份，两边永远同一个值
+    // 同 /set-names：主角的名字先写回酒馆（唯一真相源，ADR 0122），再存快照
     if (isPlayerRow) {
       const nextName = String(name ?? '').trim()
       if (nextName && nextName !== identity.playerName) {
-        await saveIdentity(ctx, String(state.meta?.cardKey ?? gameId), { ...identity, playerName: nextName })
+        if (typeof ctx.tavern.setPlayerName !== 'function') {
+          return { ok: false, reason: '这个酒馆版本不支持从面板改主角名，请去酒馆的「玩家称呼」里改' }
+        }
+        try {
+          await ctx.tavern.setPlayerName({ gameId, playerName: nextName })
+        } catch (error) {
+          return { ok: false, reason: `主角名字没能写回酒馆：${String(error?.message ?? error)}` }
+        }
       }
     }
+
+    await saveSnapshot(ctx, { gameId, turn, snapshot, textVersion: await currentTextVersion(ctx, gameId, turn) })
     return { ok: true, name: String(name ?? '').trim() }
   })
 
@@ -3228,11 +3266,13 @@ export function apply(ctx) {
     if (!Number.isInteger(turn)) return { ok: false, reason: '这一局还没结算过' }
 
     const { snapshot } = await readSnapshotAt(ctx, gameId, turn)
+    const liveName = await resolvePlayerName(ctx, gameId, String(state.meta?.cardKey ?? gameId))
     const result = queryPerson({
       snapshot,
       personId,
       name,
       level: 'full',
+      playerName: liveName,
     })
     if (!result.ok) return result
     return { ok: true, name: result.name, text: result.text }
@@ -3251,7 +3291,7 @@ export function apply(ctx) {
 
     const { snapshot } = await readSnapshotAt(ctx, gameId, turn)
     const people = Array.isArray(snapshot?.p) ? snapshot.p : []
-    const identity = await readIdentity(ctx, String(state.meta?.cardKey ?? gameId))
+    const identity = await readIdentityLive(ctx, gameId, state)
     const id = resolvePersonRef(people, wanted, { person: identity.person })
     if (!id) return { ok: false, reason: `档案里没有「${wanted}」` }
     const person = people.find((item) => String(item?.[0]) === String(id))
@@ -3272,7 +3312,7 @@ export function apply(ctx) {
 
     const { snapshot } = await readSnapshotAt(ctx, gameId, turn)
     const people = Array.isArray(snapshot?.p) ? snapshot.p : []
-    const identity = await readIdentity(ctx, String(state.meta?.cardKey ?? gameId))
+    const identity = await readIdentityLive(ctx, gameId, state)
     const id = String(personId ?? '').trim() || resolvePersonRef(people, name, { person: identity.person })
     if (!id || !people.some((item) => String(item?.[0]) === String(id))) {
       return { ok: false, reason: `档案里没有「${String(name ?? '').trim()}」` }
@@ -3459,7 +3499,7 @@ export function apply(ctx) {
     const { snapshot } = await readSnapshotAt(ctx, gameId, turn)
 
     // 同 /set-names：面板上补出来的主角要先真正建进快照
-    const identity = await readIdentity(ctx, String(state0.meta?.cardKey ?? gameId))
+    const identity = await readIdentityLive(ctx, gameId, state0)
     const playerState = ensurePlayer(snapshot.p, {
       name: identity.playerName,
       alwaysPresent: identity.person !== 'third',
@@ -3768,7 +3808,7 @@ export function apply(ctx) {
     const { snapshot } = await readSnapshotAt(ctx, gameId, turn)
 
     // 面板上补出来的主角要先真正建进快照（同 /set-names），否则下面按编号找人会找不到
-    const identity = await readIdentity(ctx, String(state.meta?.cardKey ?? gameId))
+    const identity = await readIdentityLive(ctx, gameId, state)
     const playerState = ensurePlayer(snapshot.p, {
       name: identity.playerName,
       alwaysPresent: identity.person !== 'third',
