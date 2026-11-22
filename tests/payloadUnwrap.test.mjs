@@ -124,3 +124,32 @@ test('交卷入口守卫：顶层数组不进盒（盒子里没地方放，退�
   assert.equal(normalizeSubmission([{ 建档: [] }]).ok, false)
   assert.equal(normalizeSubmission(null).ok, false)
 })
+
+// ── 对象形式的包装键（2026-11-22 真人实测）──
+// 模型把整份动作塞进 `{input:{…}}`（工具调用 args 的通用习惯）。
+// 0.1.0 没有剥壳层 → 直接吞成「0 条动作」；0.1.3 的剥壳只认「字符串里藏的 JSON」，同样漏掉这种对象壳。
+test('解包：{input:{…}} 这种对象壳也要剥', () => {
+  assert.deepEqual(unwrapPayload({ input: inner }), inner)
+})
+
+test('解包：{input:{}} 剥成空对象（模型主动交空）', () => {
+  assert.deepEqual(unwrapPayload({ input: {} }), {})
+})
+
+test('解包：arguments / parameters / args / payload / data 同类壳都认', () => {
+  for (const key of ['arguments', 'parameters', 'args', 'payload', 'data']) {
+    assert.deepEqual(unwrapPayload({ [key]: inner }), inner, `${key} 壳没剥掉`)
+  }
+})
+
+test('解包：顶层已经认得时绝不剥（不误伤正常交卷）', () => {
+  const normal = { ...inner, input: { 别的: 1 } }
+  assert.equal(unwrapPayload(normal), normal)
+})
+
+test('交卷守卫：{input:{…}} 现在认得了，套壳的载荷也能解析出动作', () => {
+  assert.equal(acceptShape({ input: inner }), true)
+  const unwrapped = unwrapPayload({ input: inner })
+  assert.equal(parseWritePayloadBundle(unwrapped).actions.length, 1)
+  assert.equal(parseJudgePayload(unwrapped).length, 1, '改状态那一条要认得出来')
+})

@@ -37,6 +37,16 @@ export const PAYLOAD_KEYS = Object.freeze([
   '通过', '不通过', '命题', '撤回', '地点',
 ])
 
+/**
+ * 模型用来「包一层」的键名（**值是对象**，不是字符串）。
+ *
+ * 2026-11-22 真人实测：模型把整份动作交成 `{"input":{"改状态":[…]}}`——
+ * 这是工具调用 args 的通用习惯（几乎所有 function-calling 协议都把参数放在某一层下面）。
+ * 上面那套 `tryJsonString` 只认「字符串里藏的 JSON」，这种对象壳会整个漏掉：
+ * 顶层不认得任何已知键 → 原样返回 → 判定/写入都读成 0 条，而且不报错。
+ */
+const WRAPPER_KEYS = Object.freeze(['input', 'arguments', 'parameters', 'args', 'payload', 'data'])
+
 /** 字符串里藏着对象就解析出来，否则给 undefined（只认 `{` / `[` 开头，不瞎猜）。 */
 function tryJsonString(value) {
   if (typeof value !== 'string') return undefined
@@ -76,6 +86,15 @@ export function unwrapPayload(payload, keys = PAYLOAD_KEYS, depth = 0) {
   }
   if (!isPlainObject(payload)) return payload
   if (keys.some((key) => payload[key] !== undefined)) return payload
+
+  // 对象形式的包装键：`{input:{…}}`。只有「仅此一个键」时才剥——多键时无法判断哪层是真内容，
+  // 宁可交给 acceptShape 退回让模型重交，也别瞎猜。
+  const ownKeys = Object.keys(payload)
+  if (ownKeys.length === 1 && WRAPPER_KEYS.includes(ownKeys[0])) {
+    const inner = payload[ownKeys[0]]
+    if (isPlainObject(inner) || Array.isArray(inner)) return unwrapPayload(inner, keys, depth + 1)
+  }
+
   const candidates = Object.values(payload).map(tryJsonString).filter(Boolean)
   if (!candidates.length) return payload
   // 双键包装（parent + https）里只有一个装着真内容：优先挑认得出的那个
