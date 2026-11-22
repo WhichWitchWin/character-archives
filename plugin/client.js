@@ -866,10 +866,17 @@ window.__ModuleLoader__.load({
                       key: col.code,
                       style: { display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: font.xs },
                     },
+                    // 名字独占一格：以前名字和「＋」「锁」塞在同一个固定 68px 的 flex 盒子里，
+                    // 名字是可收缩项，而中文的 min-content 就是**一个字**——字号一大就被压成逐字竖排
+                    // （2026-11-22 用户截图）。现在名字单独一个 span，不许换行；按钮另起一个小容器。
                     h(
                       'span',
-                      { style: { ...muted, flex: '0 0 68px', display: 'flex', alignItems: 'center', gap: 2 } },
+                      { style: { ...muted, flex: '0 0 auto', minWidth: '68px', whiteSpace: 'nowrap' } },
                       col.name,
+                    ),
+                    h(
+                      'span',
+                      { style: { display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 } },
                       h(
                         'button',
                         {

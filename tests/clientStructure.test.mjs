@@ -392,6 +392,21 @@ test('命题清单与档案数据同源刷新：拉取放 useArchive，详情块
   assert.ok(detail.includes('catalog'), '详情块要从属性里拿清单')
 })
 
+// 「他是什么样」的栏目名以前和「＋」「锁」挤在同一个 68px 的 flex 盒子里：
+// 名字是可收缩项，中文的 min-content 就是**一个字**，于是字号一大就被压成逐字竖排
+// （2026-11-22 用户截图）。名字要独占一格、不换行，按钮另起一个小容器。
+test('栏目名独占一格且不换行，按钮不跟它抢宽度', () => {
+  const cols = sliceBetween(client, "browse === 'columns' && row.aboutColumns?.length", 'col.claims.length')
+  const nameAt = cols.indexOf('col.name')
+  assert.ok(nameAt > 0, '找不到栏目名')
+  const after = cols.slice(nameAt, nameAt + 200)
+  assert.ok(!/col\.name[\s\S]{0,60}h\(\s*'button'/u.test(after), '栏目名容器里又塞按钮了（字一大就逐字竖排）')
+  assert.ok(!/col\.name[\s\S]{0,80}h\(LockChip/u.test(after), '锁按钮又塞回栏目名容器里了')
+  const before = cols.slice(Math.max(0, nameAt - 300), nameAt)
+  assert.ok(before.includes("whiteSpace: 'nowrap'"), '栏目名要 whiteSpace: nowrap（否则窄了一字一行）')
+  assert.ok(before.includes("minWidth: '68px'"), '栏目名要给最小宽度，短名字之间才对得齐')
+})
+
 // 拖拽只在人物行的标题行生效（2026-11-06 用户反馈）：
 // 整行可拖会让展开后在正文里选中文字也变成拖动人物。
 test('拖拽：人物行只有标题行可拖，根容器不再 draggable', () => {
