@@ -1890,7 +1890,7 @@ gap  = 当前轮次 − 最后确认轮次
 | `snapshot.js` | 快照 `{v,t,p,gt,loc,c,pt}`；人物 4 格校验与深拷贝；`findPerson`；`byteSize`；`resolveTurn`（回退后按酒馆当前轮次校正） | snapshot.test |
 | ~~`capacity.js`~~ | **文件不存在**——容量执行没做（§3.4 / §3.5 顶部有说明） | — |
 | `gametime.js` | 离场记录（人物 → 离场轮次 + `gt`）（纯函数） | gametime.test |
-| `notice.js` | **已删除**（2026-11-05 移入回收站）：提示记录整套从没接线（没人 import），「提示」设置组也早已删；要记事件时直接用 `pushDebug` | — |
+| ~~`notice.js`~~ | **已删除**（2026-11-05 移入回收站）：提示记录整套从没接线（没人 import），「提示」设置组也早已删；要记事件时直接用 `pushDebug` | — |
 | ~~`recall.js`~~ | **已退役**（2026-11-04 移入回收站）：旧召回读「条目」结构，与「命题 + 指针」写入对不上 | — |
 | `cooldown.js` | 召回冷却（人物级/条目级），到期即删 | cooldown.test |
 | ~~`compose.js`~~ / ~~`brief.js`~~ / ~~`render.js`~~ | **已退役**（2026-11-04 移入回收站）：三步预算装配、简版/提示档装配、详细档渲染，都跟着旧召回一起下线 | — |
@@ -1909,7 +1909,7 @@ gap  = 当前轮次 − 最后确认轮次
 | `store.js` | 自持文件存储：整局数据／每轮快照写 `<酒馆数据>/plugin-data/<插件名>/`（[ADR 0058](adr/0058-数据放插件数据区.md)），酒馆只留 `{f,h}` 指针；原子写（.tmp→rename）；按轮次窗口剪枝（窗口＝设置项 `storage.keepTurns`，默认 200、范围 100～1000）、剪掉的挪 `trash/`；`global-words.json` 存**跨局专名词库**（[ADR 0077](adr/0077-全局专名词库.md)）；`dropGame` 删局清理；`pruneAfter` 回退清理（把未来轮次的快照挪 `trash/`）；**分叉搬运**：`hasGame`／`copySnapshotsUpTo`（只搬 ≤ 分叉轮，以父局索引为准、子局索引按轮合并）／`copyDeleted`（[ADR 0110](adr/0110-分叉继承档案.md)） | store.test |
 | `segment.js` | 中文分词（按词频动态规划，不是贪心）：`tokenize` / `hasWord` 按词边界判断；内置词表 `assets/dict/zh.txt`（jieba `dict.txt.small` 精简，MIT，1.34MB / 10.9 万词 / 最长 15 字）；**用户词典是单独一层、每轮整体重建**（`setExtraWords` 不累积）：灌当前人姓名/别名＋模糊建档名字＋**跨局专名词库**（ADR 0077） | segment.test |
 | `promptTemplates.js` | 三段可编辑提示词：默认模板、`fillTemplate`（逐字符扫描，不踩 `String.replace` 的 `$&` 坑）、`resolveTemplates`（空串回落默认） | promptTemplates.test |
-| `dataRoot.js` | 数据根定位：`DSH_TAVERN_ARCHIVES_DATA` → `DSH_TAVERN_DATA_DIR` → 从自身安装位置推断 → 插件目录兜底；`samePath` 做跨平台比较 | dataRoot.test |
+| `dataRoot.js` | 数据根定位：`DSH_TAVERN_ARCHIVES_DATA` → `DSH_TAVERN_DATA_DIR` → 从自身安装位置推断 → 插件目录兜底。导出 `pickDataRoot`（四级定位）与 `PLUGIN_NAME` | dataRoot.test |
 | `draft.js` | 模糊建档表：`scanDraft` 程序扫本轮正文（复用 `matchText` 口径，单字名看 `singleName`）、`pruneDraft` 建档后把人摘掉、`expireDraft` 太久没露面的人清出去 | draft.test |
 | `entries.js` | 条目定义（码→条目）、`fromTurn`、回退清理 | entries.test |
 | `person.js` | 人物编号 `p<数字>`，永不复用 | person.test |

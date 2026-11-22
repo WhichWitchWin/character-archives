@@ -1,0 +1,24 @@
+{
+  "note": "文档守卫的豁免名单。三类：symbols=文档里出现、但不在本仓库代码里的标识符（宿主/酒馆接口名，或文档故意说明「这个名字已经删了」）；paths=文档故意提到「不存在」的文件；settings=历史叙述里才出现的设置项。加条目要写清为什么——它是用来挡误报的，不是用来盖住真问题的。",
+  "symbols": [
+    "currentKey",
+    "registerStatusSection",
+    "updateCardRaw",
+    "readCardRaw",
+    "onCardChanged",
+    "onSettled",
+    "versionSignal",
+    "settlementTask",
+    "manualTask",
+    "worldbookEntries",
+    "settlementSection",
+    "settlementTool",
+    "applyValueActions",
+    "mergeMvuIntoClaims"
+  ],
+  "paths": [
+    "lib/capacity.js",
+    "lib/notice.js"
+  ],
+  "settings": []
+}
