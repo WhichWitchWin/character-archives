@@ -23,12 +23,14 @@ test('指针键的格式', () => {
   assert.equal(pointerKey('p1', 9), 'pt:p1:9')
 })
 
-// ── 三个盖章时机（ADR 0086）──
+// ── 盖章时机（2026-11-22 改：只认召回章）──
 
-test('建立/修改章：刚变过的指针不给（当前轮 − 最后变动轮 < N）', () => {
-  assert.equal(isPointerCoolingDown({}, ptr('p1', 9, 20), 20, 10), true)
-  assert.equal(isPointerCoolingDown({}, ptr('p1', 9, 20), 25, 10), true)
-  assert.equal(isPointerCoolingDown({}, ptr('p1', 9, 20), 30, 10), false)
+test('新建/刚改过的指针不再吃冷却——立刻可见', () => {
+  // 原来「建立/修改」也盖章：玩家手动加一条，接下来 10 轮既召不回来、详细档也查不到，
+  // 表现为「我明明写了，模型就是不知道」。现在只认召回章。
+  assert.equal(isPointerCoolingDown({}, ptr('p1', 9, 20), 20, 10), false)
+  assert.equal(isPointerCoolingDown({}, ptr('p1', 9, 20), 25, 10), false)
+  assert.equal(isPointerCoolingDown({}, ptr('p1', 9, 5), 25, 10), false)
 })
 
 test('召回章：冷却表里有记录、还没到期就不给', () => {

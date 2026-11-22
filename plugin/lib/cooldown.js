@@ -2,10 +2,11 @@
 //
 // **粒度是指针级**：一条指针 = 某人 × 某条命题 × 一条认知。键是 `pt:人物id:命题id`。
 //
-// 判"这条现在能不能给"要三个盖章时机合起来看：
-//   ① **建立**：指针第 4 格（最后变动轮）——`当前轮 − 它 < N` → 冷却中；
-//   ② **修改**：同上，改一次就刷新；
-//   ③ **召回**：冷却表里 `until > 当前轮` → 冷却中。
+// 判"这条现在能不能给"**只看召回/查询盖章**：冷却表里 `until > 当前轮` → 冷却中。
+//
+// 2026-11-22 起不再按「建立/修改」盖章（ADR 0115）：新建或刚改过的指针**立刻可见**，
+// 等它真被注入过一次才进冷却。旧口径的副作用是"玩家手动加的内容 10 轮内既召不回来也查不到"，
+// 而模型查过一次没看到新东西就不肯再查——新内容等于被静默吞掉。
 //
 // 轮数 <= 0 表示关掉冷却，一律放行。
 //
@@ -22,21 +23,26 @@ export function pointerKey(personId, claimId) {
 }
 
 /**
- * 这条指针现在能不能给（ADR 0086）。
+ * 这条指针现在能不能给（ADR 0086，2026-11-22 改了盖章口径）。
+ *
+ * **只认「召回/查询盖章」**：新建或刚改过的指针**立刻可见**，等它真被注入过一次
+ * （召回、或模型/面板查档）才进冷却。
+ *
+ * 为什么砍掉「建立/修改」那一格：玩家在面板手动加一条内容，本来是想让它尽快生效，
+ * 但旧口径按「最后变动轮」算，接下来 N 轮（默认 10）自动召回不念、详细档也查不到——
+ * 表现为「我明明写了，模型就是不知道」，而且模型自己查过一次没看到新东西，就不肯再查。
+ * 代价是"刚写进去的内容下一轮可能被念回来"（略显啰嗦），换来"写了立刻能看到"。
  *
  * @param {object} cooldowns 冷却表
  * @param {any[]} pointer 指针 `[人物id, 命题id, 来源组, 最后变动轮]`
  * @param {number} turn 当前轮
- * @param {number} turns 冷却轮数
+ * @param {number} turns 冷却轮数（0＝关）
  * @returns {boolean}
  */
 export function isPointerCoolingDown(cooldowns, pointer, turn, turns = DEFAULT_COOLDOWN_TURNS) {
   if (!(turns > 0)) return false
   if (!Array.isArray(pointer)) return false
   if (!Number.isInteger(turn)) return false
-
-  const lastTurn = Number.isInteger(pointer[3]) ? pointer[3] : 0
-  if (turn - lastTurn < turns) return true
 
   const record = cooldowns?.[pointerKey(pointer[0], pointer[1])]
   return Boolean(record && Number.isInteger(record.until) && turn < record.until)

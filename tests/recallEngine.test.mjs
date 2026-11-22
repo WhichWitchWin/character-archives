@@ -50,13 +50,29 @@ test('栏目没勾选的不给', () => {
   assert.equal(text, '')
 })
 
-test('冷却中的指针不给（建立/修改盖章）', () => {
+test('刚变过的指针照常给（只认召回盖章，ADR 0115）', () => {
   const snapshot = {
     p: [person('p1', 1, '老陈')],
     c: [claim(1, 'p1', 'a', '在旧港')],
     pt: [pointer('p1', 1, [[TRUTH.TRUE, SELF]], 10)],   // 第 10 轮刚变过
   }
   const { text } = buildRecallSection({ ...base, snapshot, turn: 10, cooldownTurns: 10 })
+  assert.ok(text.includes('在旧港'), '新建/刚改的指针立刻可见，不再吃「建立章」')
+})
+
+test('召回盖章后、还没到期的指针不给', () => {
+  const snapshot = {
+    p: [person('p1', 1, '老陈')],
+    c: [claim(1, 'p1', 'a', '在旧港')],
+    pt: [pointer('p1', 1, [[TRUTH.TRUE, SELF]], 10)],
+  }
+  const { text } = buildRecallSection({
+    ...base,
+    snapshot,
+    turn: 12,
+    cooldownTurns: 10,
+    cooldowns: { 'pt:p1:1': { lastTurn: 10, until: 20 } },
+  })
   assert.equal(text, '')
 })
 
