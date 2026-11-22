@@ -84,8 +84,16 @@ export function ensurePlayer(persons, { name = '', alwaysPresent = false } = {})
   const person = list[index]
   const next = [...person]
   let changed = false
-  if (String(next[2] ?? '').trim() !== label) {
-    next[2] = label
+  const wanted = String(name ?? '').trim()
+  const current = String(next[2] ?? '').trim()
+  if (wanted && current !== wanted) {
+    next[2] = wanted
+    changed = true
+  } else if (!current) {
+    // 名字本来就空：补兜底（姓名不可留空，ADR 0084）。
+    // **只在"本来就空"时补**——拿不到称呼就写「主角」会让名字每轮横跳：
+    // 酒馆偶发读不到称呼 → 写成「主角」→ 下次读到真名 → 又改回来（2026-11-22 实测）。
+    next[2] = playerNameOf('')
     changed = true
   }
   if (alwaysPresent && next[1] !== STATUS.PRESENT) {

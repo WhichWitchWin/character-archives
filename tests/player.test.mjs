@@ -142,3 +142,26 @@ test('ensurePlayer：名字没变、状态也对时不报 changed', () => {
   assert.equal(result.changed, false)
   assert.equal(result.created, false)
 })
+
+// 2026-11-22 实测：主角名字在指针里一会儿「主角」、一会儿「测试人」、一会儿「小s」。
+// 根因：`resolvePlayerName` 是三级兜底（酒馆称呼 → 插件记的旧称呼 → 空），最后
+// `playerNameOf('')` 兜成「主角」并**写进快照**；酒馆偶发读不到称呼时还会回落到旧值。
+// 所以已有 p0 时，**只有明确拿到称呼才改名**，拿不到就保留原名。
+test('ensurePlayer：已有主角、这次拿不到称呼 → 保留原名（不许写兜底「主角」）', () => {
+  const persons = [P(PLAYER_ID, STATUS.PRESENT, '小s')]
+  const result = ensurePlayer(persons, { name: '' })
+  assert.equal(result.persons[0][2], '小s', '拿不到称呼就改「主角」，下一轮再改回来 → 名字来回横跳')
+  assert.equal(result.changed, false)
+})
+
+test('ensurePlayer：已有主角、名字本来就是空的 → 补兜底（姓名不可留空）', () => {
+  const result = ensurePlayer([P(PLAYER_ID, STATUS.PRESENT, '')], { name: '  ' })
+  assert.equal(result.persons[0][2], '主角')
+  assert.equal(result.changed, true)
+})
+
+test('ensurePlayer：明确拿到称呼时照常同步', () => {
+  const result = ensurePlayer([P(PLAYER_ID, STATUS.PRESENT, '主角')], { name: '小s' })
+  assert.equal(result.persons[0][2], '小s')
+  assert.equal(result.changed, true)
+})
