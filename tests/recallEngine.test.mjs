@@ -373,6 +373,34 @@ test('豁免是那一条指针的：别人记得的同一条照样冷却', () =>
   assert.deepEqual(result.manualFreeUsed, ['pt:p1:1'])
 })
 
+// 注入必须写明「关于谁」（2026-11-22 用户实测）：老陈记得「周可人是演员」，
+// 原来注入成「▍老陈 / · 演员：真」——「周可人」三个字一次都没出现，
+// 模型最自然的解读就是「老陈是演员」。只在**关于别人**时加前缀，省字数。
+test('注入写明「关于谁」：别人的事带人名，自己的事不带', () => {
+  const snapshot = {
+    p: [person('p1', 1, '老陈'), person('p2', 1, '周可人')],
+    c: [
+      claim(1, 'p1', 'a', '小s的管家'),   // 关于老陈自己
+      claim(2, 'p2', 'a', '演员'),        // 关于周可人
+    ],
+    pt: [pointer('p1', 1), pointer('p1', 2)],
+  }
+  const { text } = buildRecallSection({ ...base, snapshot })
+  assert.ok(text.includes('· 周可人 · 演员'), '关于别人的命题要带人名')
+  assert.ok(text.includes('· 小s的管家'), '关于自己的照常给')
+  assert.ok(!text.includes('· 老陈 · 小s的管家'), '关于自己的不加前缀（省字数）')
+})
+
+test('注入写明「关于谁」：主角回场那段也要带', () => {
+  const snapshot = {
+    p: [person('p0', 1, '小s'), person('p2', 1, '周可人')],
+    c: [claim(1, 'p2', 'a', '演员')],
+    pt: [pointer('p0', 1)],   // 小s 记得周可人是演员
+  }
+  const { text } = buildRecallSection({ ...base, snapshot, playerBack: 5 })
+  assert.ok(text.includes('· 周可人 · 演员'), '主角回场那段同样要写明关于谁')
+})
+
 // 预算不够时被砍掉的块：标记不能算"用掉"（那条其实没进提示词，删了就白改）
 test('标记生效但被预算砍掉 → 不算用掉', () => {
   const snapshot = {

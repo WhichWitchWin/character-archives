@@ -199,3 +199,17 @@ test('面板召回：被 skip 挡掉的指针不算用掉（同一轮已经在�
   assert.equal(result.pointers.length, 0)
   assert.deepEqual(result.manualFreeUsed, [], '没进文本就不算用掉')
 })
+
+// 查档案（面板「查认知」与正文模型的 archive_query 都走这里）也要写明「关于谁」，
+// 否则模型会把「老陈记得周可人是演员」读成「老陈是演员」（2026-11-22）。
+test('查档案写明「关于谁」：别人的事带人名，自己的事不带', () => {
+  const snapshot = {
+    p: [person('p1', 1, '老陈'), person('p2', 1, '周可人')],
+    c: [claim(1, 'p2', 'a', '演员'), claim(2, 'p1', 'a', '小s的管家')],
+    pt: [pointer('p1', 1), pointer('p1', 2)],
+  }
+  const result = queryPerson({ snapshot, name: '老陈' })
+  assert.ok(result.text.includes('· 周可人 · 演员'), '关于别人的要带人名')
+  assert.ok(result.text.includes('· 小s的管家'), '关于自己的照常给')
+  assert.ok(!result.text.includes('· 老陈 · 小s的管家'), '关于自己的不加前缀')
+})

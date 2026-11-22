@@ -84,6 +84,24 @@ export function pointerOf(pointers, personId, claimId) {
  *
  * @returns {string|null} 人话原因；null = 可以加
  */
+/**
+ * 这条命题「关于谁」——只有当它说的**不是持有者自己**时才返回那个人的 id。
+ *
+ * 召回注入的每一行都要带上它：老陈记得「周可人是演员」，原来注入成
+ * 「▍老陈 / · 演员：真」——「周可人」三个字一次都不出现，模型会读成「老陈是演员」
+ * （2026-11-22 用户实测）。关于自己的返回空串，调用方就不加前缀，省字数。
+ *
+ * @param {any[]} claim 命题 `[id, 关于谁, 栏目码, 内容, …]`
+ * @param {string} holderId 这条认知的持有者（「谁记得」）
+ * @returns {string} 关于的人的 id；说的是自己（或脏数据）时为空串
+ */
+export function aboutIdOf(claim, holderId) {
+  const about = String(claim?.[1] ?? '')
+  if (!about) return ''
+  if (about === String(holderId ?? '')) return ''
+  return about
+}
+
 export function cognitionRefusal({ persons = [], claims = [], pointers = [], personId, claimId } = {}) {
   const pid = String(personId ?? '').trim()
   const cid = Number(claimId)

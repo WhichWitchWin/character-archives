@@ -9,7 +9,7 @@
 
 import { resolvePersonByName } from './actions.js'
 import { cooldownGate, isPointerCoolingDown, pointerKey } from './cooldown.js'
-import { TRUTH, SELF, UNKNOWN_SOURCE, visibleGroups } from './pointers.js'
+import { aboutIdOf, TRUTH, SELF, UNKNOWN_SOURCE, visibleGroups } from './pointers.js'
 
 /** 编号优先（面板召回排队存的是编号），退一步才按名字认。 */
 function lookupId(people, personId, name) {
@@ -142,12 +142,15 @@ export function queryPerson({
   for (const pointer of visible) {
     const claim = claimById.get(pointer[1])
     if (!claim) continue
+    // 写明「关于谁」：关于自己的不加前缀，省字数（2026-11-22）
+    const aboutName = nameOf(aboutIdOf(claim, foundId))
+    const prefix = aboutName ? `${aboutName} · ` : ''
     if (level === 'brief') {
-      lines.push(`· ${claim[3]}`)
+      lines.push(`· ${prefix}${claim[3]}`)
     } else {
       const groups = visibleGroups(pointer, conflictDisplay)
       const detail = groups.map((group) => describeGroup(group, nameOf)).join('；')
-      lines.push(`· ${claim[3]}${detail ? `：${detail}` : ''}`)
+      lines.push(`· ${prefix}${claim[3]}${detail ? `：${detail}` : ''}`)
     }
     used.push(pointer)
   }

@@ -13,7 +13,7 @@
 import { STATUS } from './snapshot.js'
 import { isPlayer } from './player.js'
 import { cooldownGate, pointerKey } from './cooldown.js'
-import { TRUTH, SELF, UNKNOWN_SOURCE, visibleGroups } from './pointers.js'
+import { aboutIdOf, TRUTH, SELF, UNKNOWN_SOURCE, visibleGroups } from './pointers.js'
 import { fillTemplate } from './promptTemplates.js'
 import { autoWordsOf } from './indexWords.js'
 import { entryEyeKey } from './eyes.js'
@@ -212,7 +212,9 @@ export function buildRecallSection({
       const lines = [`▍${nameOf('p0')}`]
       const taken = []
       for (const item of playerItems) {
-        const line = `· ${item.claim[3]}：${describeGroups(item.pointer, nameOf, conflictDisplay)}`
+        // 写明「关于谁」：关于主角自己的不用加，省字数（2026-11-22）
+        const aboutName = nameOf(aboutIdOf(item.claim, 'p0'))
+        const line = `· ${aboutName ? `${aboutName} · ` : ''}${item.claim[3]}：${describeGroups(item.pointer, nameOf, conflictDisplay)}`
         if (used + charCount(line) > limit) break
         lines.push(line)
         taken.push(item.pointer)
@@ -248,7 +250,9 @@ export function buildRecallSection({
     const taken = []
     const push = (item, detailed) => {
       const detail = detailed ? describeGroups(item.pointer, nameOf, conflictDisplay) : ''
-      const line = `· ${item.claim[3]}${detail ? `：${detail}` : ''}`
+      // 写明「关于谁」：关于自己的不加前缀，省字数（2026-11-22）
+      const aboutName = nameOf(aboutIdOf(item.claim, personId))
+      const line = `· ${aboutName ? `${aboutName} · ` : ''}${item.claim[3]}${detail ? `：${detail}` : ''}`
       const chars = charCount(line) + 1
       if (chars > left) return false
       lines.push(line)
