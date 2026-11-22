@@ -454,3 +454,83 @@ test('面板数据：autoWords 真的算出来了，且排除已有索引词（�
 
   configureWordSegmenter(null)
 })
+
+// ── 条目锁 / 值锁（M5-6）：面板要能看出每行锁没锁、被谁锁住的 ──
+const lockSnapshot = () => ({
+  t: 3,
+  p: [person('p7', 1, '老陈')],
+  c: [
+    [1, 'p7', 'a', '账房先生', 1, [], 0],
+    [2, 'p7', 'b', '谨慎', 1, [], 0],
+  ],
+  pt: [
+    ['p7', 1, [[0, '']], 1],
+    ['p7', 2, [[0, '']], 1],
+  ],
+})
+const lockDefinitions = { a: { name: '职业' }, b: { name: '性格' } }
+
+test('面板锁状态：没锁时条目与值都标 false', () => {
+  const view = buildPanelView({ snapshot: lockSnapshot(), definitions: lockDefinitions, now: 3 })
+  const row = view.groups.present.find((item) => item.id === 'p7')
+  const col = row.aboutColumns.find((item) => item.code === 'a')
+  assert.equal(col.locked, false)
+  assert.equal(col.claims[0].locked, false)
+  assert.equal(col.claims[0].lockedBy, null)
+})
+
+test('面板锁状态：条目锁把整栏标成锁住，值报 lockedBy=entry', () => {
+  const view = buildPanelView({
+    snapshot: lockSnapshot(),
+    definitions: lockDefinitions,
+    lockEntries: { 'p7:a': true },
+    now: 3,
+  })
+  const row = view.groups.present.find((item) => item.id === 'p7')
+  const col = row.aboutColumns.find((item) => item.code === 'a')
+  assert.equal(col.locked, true)
+  assert.equal(col.claims[0].lockedBy, 'entry')
+  const other = row.aboutColumns.find((item) => item.code === 'b')
+  assert.equal(other.locked, false)
+})
+
+test('面板锁状态：值锁只影响那一条，锁因报 claim', () => {
+  const view = buildPanelView({
+    snapshot: lockSnapshot(),
+    definitions: lockDefinitions,
+    lockClaims: { 1: true },
+    now: 3,
+  })
+  const row = view.groups.present.find((item) => item.id === 'p7')
+  const col = row.aboutColumns.find((item) => item.code === 'a')
+  assert.equal(col.claims[0].lockedBy, 'claim')
+  const other = row.aboutColumns.find((item) => item.code === 'b')
+  assert.equal(other.claims[0].lockedBy, null)
+})
+
+test('面板锁状态：人物锁压过一切（没单独锁的栏目也算锁）', () => {
+  const view = buildPanelView({
+    snapshot: lockSnapshot(),
+    definitions: lockDefinitions,
+    lock: { p7: true },
+    lockEntries: { 'p7:a': true },
+    now: 3,
+  })
+  const row = view.groups.present.find((item) => item.id === 'p7')
+  const col = row.aboutColumns.find((item) => item.code === 'b')
+  assert.equal(col.locked, true)
+  assert.equal(col.claims[0].lockedBy, 'person')
+})
+
+test('面板锁状态：认知行也带锁状态', () => {
+  const view = buildPanelView({
+    snapshot: lockSnapshot(),
+    definitions: lockDefinitions,
+    lockClaims: { 1: true },
+    now: 3,
+  })
+  const row = view.groups.present.find((item) => item.id === 'p7')
+  const cog = row.cognitions.find((item) => item.claimId === 1)
+  assert.equal(cog.locked, true)
+  assert.equal(cog.lockedBy, 'claim')
+})

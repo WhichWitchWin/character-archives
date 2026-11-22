@@ -13,6 +13,8 @@
 //
 // 纯逻辑模块：不 import 酒馆接口、不接触 ctx。
 
+import { entryLockKey } from './locks.js'
+
 export function buildWriteMaterial({
   snapshot,
   presentIds = new Set(),
@@ -21,6 +23,8 @@ export function buildWriteMaterial({
   hitWords = new Set(),
   turn = 0,
   locked = undefined,
+  lockedEntries = undefined,
+  lockedClaims = undefined,
 } = {}) {
   const claims = Array.isArray(snapshot?.c) ? snapshot.c : []
   const pointers = Array.isArray(snapshot?.pt) ? snapshot.pt : []
@@ -62,6 +66,24 @@ export function buildWriteMaterial({
 
   const result = { people: [], mentioned: [], seqMap, seqOf }
 
+  // 锁住的条目/值不进素材（M5-6）：列了也不能写，纯烧 token，还会让模型交一堆注定被丢弃的动作。
+  // 条目锁按「命题所属人 + 栏目」判——别人要给它加认知，动作里的「关于」也得报那个人，同样会被拦。
+  const lockedRow = (claim) =>
+    (lockedClaims && lockedClaims.has(claim[0])) ||
+    (lockedEntries && lockedEntries.has(entryLockKey(claim[1], claim[2])))
+
+  // 这个人哪几栏锁着：交给 followup 拼素材时排除掉，别把它列进「这些栏目还空着」。
+  const lockedCodesOf = (personId) => {
+    const codes = new Set()
+    if (!lockedEntries) return codes
+    const prefix = `${personId}:`
+    for (const key of lockedEntries) {
+      const text = String(key)
+      if (text.startsWith(prefix)) codes.add(text.slice(prefix.length))
+    }
+    return codes
+  }
+
   for (const id of presentIds) {
     const person = personOf(id)
     if (!person) continue
@@ -75,11 +97,12 @@ export function buildWriteMaterial({
       const claim = byId.get(pointer[1])
       if (!claim) continue
       if (allowed && !allowed.has(claim[2])) continue
+      if (lockedRow(claim)) continue
       if (!related(claim, id)) continue
       seqOf(claim[0])
       rows.push({ claim, pointer })
     }
-    result.people.push({ id, name: String(person[2] ?? ''), status: person[1], claims: rows })
+    result.people.push({ id, name: String(person[2] ?? ''), status: person[1], claims: rows, lockedCodes: lockedCodesOf(id) })
   }
 
   for (const id of mentionedIds) {
@@ -93,12 +116,12 @@ export function buildWriteMaterial({
     const rows = claims
       .filter(
         (claim) =>
-          Array.isArray(claim) && claim[1] === id && (!allowed || allowed.has(claim[2])),
+          Array.isArray(claim) && claim[1] === id && (!allowed || allowed.has(claim[2])) && !lockedRow(claim),
       )
       .map((claim) => ({ claim, pointer: null }))
     if (!rows.length) continue
     for (const row of rows) seqOf(row.claim[0])
-    result.mentioned.push({ id, name: String(person[2] ?? ''), rows, claims: rows, status: person[1] })
+    result.mentioned.push({ id, name: String(person[2] ?? ''), rows, claims: rows, status: person[1], lockedCodes: lockedCodesOf(id) })
   }
 
   return result

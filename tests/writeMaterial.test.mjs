@@ -119,3 +119,24 @@ test('没有在场人物时返回空列表', () => {
   const material = run({ presentIds: new Set() })
   assert.deepEqual(material.people, [])
 })
+
+// ── 条目锁 / 值锁（M5-6）：锁住的东西**不进写入素材** ──
+// 为什么：列了他也不能写，纯烧 token；更糟的是模型会交一堆注定被丢弃的动作，日志变吵（ADR 0038 同理）。
+test('值锁：锁住的那条值不出现在素材里，同栏目其他值照常', () => {
+  const material = run({ lockedClaims: new Set([2]) })
+  const laochen = material.people.find((item) => item.id === 'p7')
+  assert.deepEqual(idsOf(laochen.claims), [1])
+})
+
+test('条目锁：这一栏的值全不出现，并记下「这栏锁着」', () => {
+  const material = run({ lockedEntries: new Set(['p7:a']) })
+  const laochen = material.people.find((item) => item.id === 'p7')
+  assert.deepEqual(idsOf(laochen.claims), [])
+  assert.deepEqual([...laochen.lockedCodes], ['a'])
+})
+
+test('条目锁：锁住的内容对所有人都不列（别人要给它加认知，动作也得报「关于他」）', () => {
+  const material = run({ lockedEntries: new Set(['p7:a']) })
+  const lisi = material.people.find((item) => item.id === 'p12')
+  assert.ok(!lisi.claims.some((row) => row.claim[0] === 1), '命题 1 属于 p7:a，被锁后谁的素材里都不列')
+})

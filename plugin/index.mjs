@@ -25,6 +25,7 @@ import { mergeSettings, resolveSettings, splitSettings } from './lib/settings.js
 import { properNounsOf, wordsOfClaim, filterIndexWords, withClaimWords, configureWordSegmenter } from './lib/indexWords.js'
 import { buildWriteMaterial } from './lib/writeMaterial.js'
 import { applyWriteActions } from './lib/writeActions.js'
+import { entryLockKey, toggleFlag } from './lib/locks.js'
 import { addGlobalWords, globalWordList, normalizeGlobalWords } from './lib/globalWords.js'
 import { matchText } from './lib/match.js'
 import { splitAliases, namesOfPerson } from './lib/names.js'
@@ -1055,6 +1056,15 @@ async function runWriteback(ctx, state, { gameId, turn, text, textVersion, setti
   const lockedIds = new Set(
     Object.keys(state.flags?.lock ?? {}).filter((id) => state.flags.lock[id] === true),
   )
+  // 条目锁 / 值锁（M5-6）：与人物锁一样存整局数据。三只桶交给 lib/locks.js 统一判定。
+  const lockEntries = state.flags?.lockEntries ?? {}
+  const lockClaims = state.flags?.lockClaims ?? {}
+  const locks = { lock: state.flags?.lock ?? {}, lockEntries, lockClaims }
+  // 素材过滤用集合版（值锁的键是命题 id，转成数字才和 claim[0] 比得上）
+  const lockedEntrySet = new Set(Object.keys(lockEntries).filter((key) => lockEntries[key] === true))
+  const lockedClaimSet = new Set(
+    Object.keys(lockClaims).filter((key) => lockClaims[key] === true).map((key) => Number(key)),
+  )
   // 合并素材（ADR 0092）：判人 + 写入一次发出去——后台结算档每轮只能发一次消息。
   // 写入素材用「判人前」的在场名单；刚建档的人素材里没有，但模型自己知道刚建了谁。
   const presentBefore = new Set(
@@ -1077,6 +1087,8 @@ async function runWriteback(ctx, state, { gameId, turn, text, textVersion, setti
     hitWords: new Set(),
     turn,
     locked: lockedIds,
+    lockedEntries: lockedEntrySet,
+    lockedClaims: lockedClaimSet,
   })
   const phase = await runPhase(ctx, gameId, buildCombinedPrompt({
     gt: snapshot.gt,
@@ -1306,11 +1318,21 @@ async function runWriteback(ctx, state, { gameId, turn, text, textVersion, setti
       allowedIds: presentIds,
       // 一条指针最多挂几组「别人说的」，由设置决定（P20）
       maxOtherSources: settings?.cognition?.maxOtherSources,
+      // 条目锁 / 值锁（M5-6）：锁住的内容一律丢弃，理由记进 bad
+      locks,
     })
 
     state.debugWriteback.writeActions = Array.isArray(valueActions) ? valueActions.length : null
     state.debugWriteback.bad = result.bad.length
     pushDebug(state, 'info', '值动作应用完成', { 命题: result.applied.length, 拒绝: result.bad.length })
+
+    // 因锁丢掉的单独报一条：否则「拒绝 N 条」里锁和格式错误混在一起，玩家看不出是锁在起作用
+    const lockedOut = result.bad.filter((item) => String(item.reason ?? '').includes('锁')).length
+    if (lockedOut) {
+      pushDebug(state, 'info', `因锁丢弃 ${lockedOut} 条动作`, {
+        说明: '条目锁/值锁只挡写入，召回照常（M5-6）',
+      })
+    }
 
     // 拒绝原因一定要记：模型报了动作却一条都没落盘时，这里是唯一线索
     if (result.bad.length) {
@@ -2766,6 +2788,8 @@ export function apply(ctx) {
       definitions,
       checkedCodes,
       lock: state.flags?.lock ?? {},
+      lockEntries: state.flags?.lockEntries ?? {},
+      lockClaims: state.flags?.lockClaims ?? {},
       hidden: state.flags?.hidden ?? {},
       seen: state.flags?.seen ?? {},
       fuzzyLeft: state.flags?.fuzzyLeft ?? {},
@@ -2821,6 +2845,8 @@ export function apply(ctx) {
       definitions,
       checkedCodes,
       lock: state.flags?.lock ?? {},
+      lockEntries: state.flags?.lockEntries ?? {},
+      lockClaims: state.flags?.lockClaims ?? {},
       hidden: state.flags?.hidden ?? {},
       seen: state.flags?.seen ?? {},
       fuzzyLeft: state.flags?.fuzzyLeft ?? {},
@@ -3532,18 +3558,45 @@ export function apply(ctx) {
 
   // ── 锁 / 眼睛（§8.7）──
   // 两个标记互不联动：锁只管写入，眼睛只管召回。
-  ctx.tavern.handle('character-archives/toggle', async ({ gameId, personId, field } = {}) => {
+  ctx.tavern.handle('character-archives/toggle', async ({ gameId, personId, field, code, claimId } = {}) => {
     if (!gameId) throw new Error('没有打开的对局')
     if (!personId) throw new Error('没指定人物')
-    if (!['lock', 'hidden', 'star'].includes(field)) throw new Error(`不认识的开关：${field}`)
     const state = await loadGameState(ctx.tavern, gameId)
-    const bucket = state.flags?.[field] ?? {}
-    const next = bucket[personId] === true ? false : true
-    if (next) bucket[personId] = true
-    else delete bucket[personId]
-    state.flags[field] = bucket
-    await saveGameState(ctx, gameId, state)
-    return { ok: true, field, personId, value: next }
+    state.flags = state.flags ?? {}
+
+    // 人物级三只开关（原有）：lock / hidden / star
+    if (['lock', 'hidden', 'star'].includes(field)) {
+      const bucket = state.flags?.[field] ?? {}
+      const next = bucket[personId] === true ? false : true
+      if (next) bucket[personId] = true
+      else delete bucket[personId]
+      state.flags[field] = bucket
+      await saveGameState(ctx, gameId, state)
+      return { ok: true, field, personId, value: next }
+    }
+
+    // 条目锁 / 值锁（M5-6）：键分别是「人物:栏目码」与命题 id
+    if (field === 'lockEntry' || field === 'lockClaim') {
+      const bucketName = field === 'lockEntry' ? 'lockEntries' : 'lockClaims'
+      let key = ''
+      if (field === 'lockEntry') {
+        const codeText = String(code ?? '').trim()
+        if (!codeText) throw new Error('没指定栏目')
+        key = entryLockKey(personId, codeText)
+      } else {
+        // 只认数字/纯数字字符串：Number() 太宽（true→1、'0x10'→16 会锁错命题）
+        const idText = String(claimId ?? '').trim()
+        if (!/^\d+$/.test(idText)) throw new Error('命题编号不对')
+        key = idText
+      }
+      const bucket = state.flags[bucketName] ?? {}
+      const next = toggleFlag(bucket, key)
+      state.flags[bucketName] = bucket
+      await saveGameState(ctx, gameId, state)
+      return { ok: true, field, personId, key, value: next }
+    }
+
+    throw new Error(`不认识的开关：${field}`)
   })
 
   // 浏览器侧（侧栏面板、酒馆状态页分节）来取摘要。

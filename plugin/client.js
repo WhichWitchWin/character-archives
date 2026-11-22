@@ -541,6 +541,29 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /** 三层锁的小锁按钮（M5-6）：栏目行、值行、认知行共用一份，提示语按「谁锁的」变。 */
+    function LockChip({ lockedBy, disabled = false, onToggle } = {}) {
+      const locked = Boolean(lockedBy)
+      const tip = !locked
+        ? '未锁：模型可以改'
+        : lockedBy === 'person'
+          ? '随人物锁：先在人物那一行解锁，这里才能单独改（不允许子比父宽）'
+          : lockedBy === 'entry'
+            ? '随栏目锁：先解开这一栏的锁'
+            : '已锁：模型不能改这条（召回照常）'
+      return h(
+        'button',
+        {
+          onClick: onToggle,
+          // 被人物锁压住时点它没有意义（子比父宽不成立），直接禁用比"点了没反应"好
+          disabled: disabled || lockedBy === 'person',
+          title: tip,
+          style: { ...iconBtn, fontSize: font.xxs, padding: '0 3px', lineHeight: '14px' },
+        },
+        h(LockIcon, { locked }),
+      )
+    }
+
     // 展开区：按浏览方式显示不同东西——
     //   browse='columns'    「他是什么样」：关于他的命题，按栏目列（空栏目也列）
     //   browse='cognitions'「他的认知」：他的指针，按命题的栏目分组
@@ -821,6 +844,12 @@ window.__ModuleLoader__.load({
                         },
                         '＋',
                       ),
+                      h(LockChip, {
+                        key: `lock-col-${col.code}`,
+                        lockedBy: col.lockedBy,
+                        disabled: Boolean(busy),
+                        onToggle: () => call('toggle', { personId: row.id, field: 'lockEntry', code: col.code }, '已切换栏目锁'),
+                      }),
                     ),
                     col.claims.length
                       ? h(
@@ -862,6 +891,12 @@ window.__ModuleLoader__.load({
                                 onSave: (raw) => call('update-claim-words', { claimId: claim.claimId, words: raw }, '索引词已改'),
                               }),
                               h(AutoWordsChip, { key: `auto-${claim.claimId}`, words: claim.autoWords }),
+                              h(LockChip, {
+                                key: `lock-${claim.claimId}`,
+                                lockedBy: claim.lockedBy,
+                                disabled: Boolean(busy),
+                                onToggle: () => call('toggle', { personId: row.id, field: 'lockClaim', claimId: claim.claimId }, '已切换值锁'),
+                              }),
                               // 删这条命题：连"谁知道它"一起没。破坏面比下面那个大，所以文案要点名
                               h(
                                 'button',
@@ -951,6 +986,12 @@ window.__ModuleLoader__.load({
                           onSave: (raw) => call('update-claim-words', { claimId: cog.claimId, words: raw }, '索引词已改'),
                         }),
                         h(AutoWordsChip, { key: `auto-${cog.claimId}`, words: cog.autoWords }),
+                        h(LockChip, {
+                          key: `lock-${cog.claimId}`,
+                          lockedBy: cog.lockedBy,
+                          disabled: Boolean(busy),
+                          onToggle: () => call('toggle', { personId: row.id, field: 'lockClaim', claimId: cog.claimId }, '已切换值锁'),
+                        }),
                         cog.groups.map((group) =>
                           h(
                             'span',

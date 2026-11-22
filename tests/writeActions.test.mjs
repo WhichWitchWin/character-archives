@@ -239,3 +239,50 @@ test('maxOtherSources 传进来时按它限额：传 1 只留最后一组', () =
   assert.equal(result.bad.length, 0)
   assert.deepEqual(snapshot.pt[0][2], [[TRUTH.FALSE, 'p15']])
 })
+
+// ── 条目锁 / 值锁（M5-6）：锁只管写入，动作一律丢弃并说出原因 ──
+const LOCK_ENTRY = { lock: {}, lockEntries: { 'p7:a': true }, lockClaims: {} }
+
+test('条目锁：写被锁的栏目被拒，同人别的栏目照常', () => {
+  const snapshot = { c: [], pt: [] }
+  const blocked = run(snapshot, [{ 关于: '老陈', 栏目: '位置', 值: '在旧港' }], { locks: LOCK_ENTRY })
+  assert.equal(blocked.bad.length, 1)
+  assert.match(blocked.bad[0].reason, /锁/)
+  assert.equal(snapshot.c.length, 0, '被锁的栏目一条都不该写进去')
+
+  const allowed = run(snapshot, [{ 关于: '老陈', 栏目: '身份', 值: '账房先生' }], { locks: LOCK_ENTRY })
+  assert.equal(allowed.bad.length, 0)
+  assert.equal(snapshot.c.length, 1)
+})
+
+test('值锁：覆盖已被锁的命题被拒，指针也不写', () => {
+  const snapshot = { c: [[1, 'p7', 'a', '在旧港', 3, [], 0]], pt: [] }
+  const result = run(
+    snapshot,
+    [{ 关于: '老陈', 栏目: '位置', 值: '在旧港', 序号: 1, 认知: [] }],
+    { seqMap: new Map([[1, 1]]), locks: { lock: {}, lockEntries: {}, lockClaims: { 1: true } } },
+  )
+  assert.equal(result.bad.length, 1)
+  assert.match(result.bad[0].reason, /锁/)
+  assert.equal(snapshot.c.length, 1, '不该新建第二条')
+  assert.equal(snapshot.pt.length, 0, '锁住的值不该被写指针')
+})
+
+test('值锁只锁那一条：同栏目写另一条值照常', () => {
+  const snapshot = { c: [[1, 'p7', 'a', '在旧港', 3, [], 0]], pt: [] }
+  const result = run(
+    snapshot,
+    [{ 关于: '老陈', 栏目: '位置', 值: '在码头', 认知: [] }],
+    { locks: { lock: {}, lockEntries: {}, lockClaims: { 1: true } } },
+  )
+  assert.equal(result.bad.length, 0)
+  assert.equal(snapshot.c.length, 2)
+})
+
+test('人物锁：他的整本档案都写不进去（不允许子比父宽）', () => {
+  const snapshot = { c: [], pt: [] }
+  const result = run(snapshot, [{ 关于: '老陈', 栏目: '身份', 值: '账房先生' }], { locks: { lock: { p7: true } } })
+  assert.equal(result.bad.length, 1)
+  assert.match(result.bad[0].reason, /锁/)
+  assert.equal(snapshot.c.length, 0)
+})

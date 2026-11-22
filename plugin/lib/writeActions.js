@@ -21,6 +21,7 @@ import {
   CONVENTION,
 } from './pointers.js'
 import { filterIndexWords } from './indexWords.js'
+import { isEntryLocked, isClaimLocked } from './locks.js'
 
 const MAX_TEXT_CHARS = 30
 
@@ -49,9 +50,10 @@ export function textKey(text) {
  * @param {{snapshot:object, actions?:object[], seqMap?:Map<number,number>,
  *          definitions?:object, turn?:number,
  *          resolvePerson?:(name:string)=>string|null,
- *          allowedIds?:Set<string>, maxOtherSources?:number}} input
+ *          allowedIds?:Set<string>, maxOtherSources?:number, locks?:object}} input
  *   allowedIds：**能建指针的人**（在场人物）。不传＝不限制。
  *   maxOtherSources：「别人」来源组最多几组（设置 cognition.maxOtherSources）。不传＝3。
+ *   locks：条目锁/值锁的三只桶（{lock, lockEntries, lockClaims}，见 lib/locks.js）。不传＝没锁。
  * @returns {{applied:any[], bad:Array<{action:object, reason:string}>}}
  */
 export function applyWriteActions({
@@ -64,6 +66,7 @@ export function applyWriteActions({
   resolvePerson,
   allowedIds = undefined,
   maxOtherSources = undefined,
+  locks = undefined,
 } = {}) {
   const applied = []
   const bad = []
@@ -91,6 +94,13 @@ export function applyWriteActions({
       continue
     }
 
+    // 条目锁 / 人物锁（M5-6）：这一栏模型不许写，整条动作丢弃。
+    // 要说清原因——静默丢掉会让模型以为写成了，下一轮把同一个动作再交一遍。
+    if (locks && isEntryLocked(locks, { personId: aboutId, code })) {
+      bad.push({ action, reason: `「${codeName}」这一栏锁着，不写` })
+      continue
+    }
+
     const text = String(action?.值 ?? '').trim()
     if (!text) {
       bad.push({ action, reason: '值为空' })
@@ -99,6 +109,16 @@ export function applyWriteActions({
     // 跟提示词里「30 字硬上限」对齐：超了不落盘，免得一条值吃掉整个预算
     if ([...text].length > MAX_TEXT_CHARS) {
       bad.push({ action, reason: `值超过 ${MAX_TEXT_CHARS} 字` })
+      continue
+    }
+
+    // 值锁（M5-6）：命中已有的、被锁住的那条命题就丢。
+    // 必须在 findOrCreateClaim **之前**判——否则它会先新建一条再被丢弃，留下零指针孤儿命题。
+    const existing =
+      findClaim(snapshot.c, { personId: aboutId, code, text }) ??
+      findClaimLoose(snapshot.c, { personId: aboutId, code, text, keyOf: textKey })
+    if (existing && locks && isClaimLocked(locks, { claimId: existing[0], ownerId: existing[1] })) {
+      bad.push({ action, reason: '这条值锁着，不写' })
       continue
     }
 

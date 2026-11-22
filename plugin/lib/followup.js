@@ -123,7 +123,7 @@ export function buildWritePrompt({
     const status = STATUS_LABEL[person.status] ?? '在场'
     const suffix = person.fresh ? '（本轮新建档，栏目全空）' : ''
     lines.push('', `【${labelOf(person)} · ${status}】${suffix}`)
-    pushClaimBlocks(lines, person.claims, { ...shared, listEmptyWhenBlank: true })
+    pushClaimBlocks(lines, person.claims, { ...shared, listEmptyWhenBlank: true, lockedCodes: person.lockedCodes })
   }
 
   const others = Array.isArray(mentioned) ? mentioned.filter((item) => item?.name) : []
@@ -131,7 +131,7 @@ export function buildWritePrompt({
     lines.push('', '【正文提到、但不在场】')
     for (const person of others) {
       lines.push(`· ${labelOf(person)}`)
-      pushClaimBlocks(lines, person.claims, shared)
+      pushClaimBlocks(lines, person.claims, { ...shared, lockedCodes: person.lockedCodes })
     }
   }
 
@@ -244,7 +244,7 @@ export function buildCombinedPrompt({
   return `${judge}\n\n${write}`
 }
 
-function pushClaimBlocks(lines, claims, { definitions, allowed, textOf, nameOf, seqOf, listEmptyWhenBlank = false }) {
+function pushClaimBlocks(lines, claims, { definitions, allowed, textOf, nameOf, seqOf, listEmptyWhenBlank = false, lockedCodes = undefined }) {
   const list = Array.isArray(claims) ? claims : []
   // 一条命题都没有：把勾选的栏目名列出来。
   // 不列的话素材里只有人名、什么都没有——模型会直接返回空数组，一个人都建不出来。
@@ -252,6 +252,8 @@ function pushClaimBlocks(lines, claims, { definitions, allowed, textOf, nameOf, 
     if (!listEmptyWhenBlank) return
     const names = Object.keys(definitions)
       .filter((code) => allowed.has(code))
+      // 锁住的栏目不算「空着」：列出来只会让模型往里写，写一条丢一条（M5-6）
+      .filter((code) => !(lockedCodes && lockedCodes.has(code)))
       .map((code) => definitions[code]?.name || code)
     if (names.length) lines.push(`  （这些栏目还空着：${names.join('、')}）`)
     return

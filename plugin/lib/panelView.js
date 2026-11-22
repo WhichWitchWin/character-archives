@@ -9,6 +9,7 @@ import { STATUS } from './snapshot.js'
 import { splitAliases } from './names.js'
 import { PLAYER_ID } from './player.js'
 import { wordsOfClaim, autoWordsOf } from './indexWords.js'
+import { lockReasonFor } from './locks.js'
 
 /** 沉降默认轮数（§7.11）。 */
 export const DORMANT_TURNS = 20
@@ -31,6 +32,8 @@ export function buildPanelView({
   definitions = {},
   checkedCodes = undefined,
   lock = {},
+  lockEntries = {},
+  lockClaims = {},
   hidden = {},
   seen = {},
   fuzzyLeft = {},
@@ -67,6 +70,9 @@ export function buildPanelView({
   const ATTITUDE_LABEL = { 0: '真', 1: '假', 2: '未定' }
   const nameOfId = (value) => String(personById.get(String(value))?.[2] ?? '').trim()
 
+  // 三层锁（M5-6）：人物 / 条目 / 值。判定与「谁锁的」都交给 lib/locks.js 一处，面板只负责显示。
+  const locks = { lock, lockEntries, lockClaims }
+
   // 「关于他的命题的指针」：记着关于这个人某件事的指针（别人的、也可以是他自己的）。
   // 变化可见要用它——改他的档案时动的是这类指针，他自己的认知指针根本没动。
   // 同一条命题可能被几个人记着，所以取最大值（最后一次动静）。
@@ -100,9 +106,13 @@ export function buildPanelView({
       const claim = claimById.get(pointer[1])
       const aboutId = String(claim?.[1] ?? '')
       const code = String(claim?.[2] ?? '')
+      const lockedBy = lockReasonFor(locks, { personId: aboutId, code, claimId: pointer[1] })
       return {
         claimId: pointer[1],
         code,
+        // 锁状态（M5-6）：lockedBy 说明被谁锁住——'person' / 'entry' / 'claim' / null
+        locked: lockedBy !== null,
+        lockedBy,
         // 栏目名：命题第 3 位存的是码，面板要显示人能看懂的名字
         columnName: String(definitions?.[code]?.name ?? code),
         text: String(claim?.[3] ?? ''),
@@ -144,13 +154,29 @@ export function buildPanelView({
       cognitions,
       // 「他是什么样」：**关于他的命题**，按栏目分组。空栏目也列出来——玩家才知道该补哪一栏。
       // 只收 claim[1] === 他 的命题；「他知道别人的事」在 cognitions 里，两个视角别混。
-      aboutColumns: columnCodes.map((code) => ({
-        code,
-        name: String(definitions?.[code]?.name ?? code),
-        claims: claims
-          .filter((claim) => String(claim[1] ?? '') === String(id) && String(claim[2] ?? '') === code)
-          .map((claim) => ({ claimId: claim[0], text: String(claim[3] ?? ''), words: wordsOfClaim(claim), autoWords: autoWordsOf(claim[3], wordsOfClaim(claim)) })),
-      })),
+      aboutColumns: columnCodes.map((code) => {
+        const columnLockedBy = lockReasonFor(locks, { personId: String(id), code })
+        return {
+          code,
+          name: String(definitions?.[code]?.name ?? code),
+          // 条目锁（M5-6）：人物锁上时整栏也算锁（不允许子比父宽），lockedBy 说明为什么点不动
+          locked: columnLockedBy !== null,
+          lockedBy: columnLockedBy,
+          claims: claims
+            .filter((claim) => String(claim[1] ?? '') === String(id) && String(claim[2] ?? '') === code)
+            .map((claim) => {
+              const lockedBy = lockReasonFor(locks, { personId: String(claim[1] ?? ''), code: String(claim[2] ?? ''), claimId: claim[0] })
+              return {
+                claimId: claim[0],
+                text: String(claim[3] ?? ''),
+                words: wordsOfClaim(claim),
+                autoWords: autoWordsOf(claim[3], wordsOfClaim(claim)),
+                locked: lockedBy !== null,
+                lockedBy,
+              }
+            }),
+        }
+      }),
       // 「按认知浏览」：他的指针按**命题的栏目**分组——「老陈认为周砚的职业是画师」会落在「职业」下面。
       // 只列有内容的栏目（认知视角不补空），跟 aboutColumns 的数据源不同，别混。
       cognitionColumns: columnCodes

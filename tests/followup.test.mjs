@@ -279,3 +279,22 @@ test('动态上下文：约定规则不再随工单发（已回到系统提示�
     assert.ok(!text.includes('`没完成`'), `${label} 不该出现状态枚举`)
   }
 })
+
+// ── 条目锁（M5-6）：锁住的栏目别进「这些栏目还空着」──
+// 进了的话模型会以为那栏是空的、拼命往里写，而每一条都会被锁丢掉。
+test('写入素材：锁住的栏目不列进「还空着」', () => {
+  const text = buildWritePrompt({
+    people: [{ id: 'p7', name: '老陈', status: 1, claims: [], lockedCodes: new Set(['a']) }],
+    definitions, checkedCodes: checked, textOf, nameOf,
+  })
+  assert.ok(!text.includes('身份职业'), '锁住的「身份职业」不该出现在空栏目提示里')
+  assert.ok(text.includes('当前处境'), '没锁的栏目照常提示')
+})
+
+test('写入素材：一栏都没锁时，空栏目提示照旧（不误伤）', () => {
+  const text = buildWritePrompt({
+    people: [{ id: 'p7', name: '老陈', status: 1, claims: [] }],
+    definitions, checkedCodes: checked, textOf, nameOf,
+  })
+  assert.ok(text.includes('身份职业'))
+})

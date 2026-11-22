@@ -642,3 +642,43 @@ test('分叉：订阅 onTimelineChanged，只认 fork，把父局搬给新局', 
   assert.ok(!block.includes('parent.meta?.updatedTurn'), '不许拿父局最新轮当分叉点')
   assert.ok(block.includes("kind !== 'fork'") && block.indexOf('hasGame(') > block.indexOf('stateWriteQueue('), '闸门要在队列任务里复查')
 })
+
+// ── 条目锁 / 值锁（M5-6）接线守卫 ──
+// 参数漏传不会报错：锁在存储里，界面点了也显示"已锁"，但模型照样写得进来——最隐蔽的那种坏。
+test('锁定接线：写入应用拿到三只锁桶', () => {
+  const at = lines.findIndex((line) => line.includes('applyWriteActions({'))
+  assert.ok(at >= 0, '找不到 applyWriteActions 调用')
+  const near = lines.slice(at, at + 20).join('\n')
+  assert.match(near, /^\s*locks,$/m, 'applyWriteActions 没传 locks')
+})
+
+test('锁定接线：写入素材过滤锁住的条目与值', () => {
+  const at = lines.findIndex((line) => line.includes('buildWriteMaterial({'))
+  assert.ok(at >= 0, '找不到 buildWriteMaterial 调用')
+  const near = lines.slice(at, at + 20).join('\n')
+  assert.match(near, /lockedEntries: lockedEntrySet/, '没传 lockedEntries')
+  assert.match(near, /lockedClaims: lockedClaimSet/, '没传 lockedClaims')
+})
+
+test('锁定接线：面板拿到 lockEntries / lockClaims', () => {
+  const hits = lines.filter((line) => line.includes('lockEntries: state.flags?.lockEntries')).length
+  assert.ok(hits >= 2, `面板应至少两处传 lockEntries，实际 ${hits}`)
+})
+
+test('锁定接线：toggle 支持 lockEntry / lockClaim，且命题号只认数字', () => {
+  const at = lines.findIndex((line) => line.includes("'character-archives/toggle'"))
+  assert.ok(at >= 0, '找不到 toggle 接口')
+  const near = lines.slice(at, at + 45).join('\n')
+  assert.ok(near.includes("'lockEntry'"), '不认 lockEntry')
+  assert.ok(near.includes("'lockClaim'"), '不认 lockClaim')
+  // Number() 太宽：true→1、'0x10'→16 会锁错命题
+  assert.ok(near.includes('/^\\d+$/'), '命题号应只认数字')
+})
+
+test('锁定接线：浏览器侧栏目行 / 值行 / 认知行都有小锁按钮', () => {
+  const client = readFileSync(fileURLToPath(new URL('../plugin/client.js', import.meta.url)), 'utf8')
+  assert.ok(client.includes('function LockChip'), '没有 LockChip 组件')
+  assert.equal((client.match(/h\(LockChip,/g) ?? []).length, 3, 'LockChip 应被栏目行 / 值行 / 认知行各用一次')
+  assert.ok(client.includes("field: 'lockEntry'"), '栏目行没接 lockEntry')
+  assert.equal((client.match(/field: 'lockClaim'/g) ?? []).length, 2, '值行与认知行都要接 lockClaim')
+})
