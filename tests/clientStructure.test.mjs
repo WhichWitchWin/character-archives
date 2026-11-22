@@ -392,19 +392,44 @@ test('命题清单与档案数据同源刷新：拉取放 useArchive，详情块
   assert.ok(detail.includes('catalog'), '详情块要从属性里拿清单')
 })
 
-// 「他是什么样」的栏目名以前和「＋」「锁」挤在同一个 68px 的 flex 盒子里：
-// 名字是可收缩项，中文的 min-content 就是**一个字**，于是字号一大就被压成逐字竖排
-// （2026-11-22 用户截图）。名字要独占一格、不换行，按钮另起一个小容器。
-test('栏目名独占一格且不换行，按钮不跟它抢宽度', () => {
-  const cols = sliceBetween(client, "browse === 'columns' && row.aboutColumns?.length", 'col.claims.length')
+// 「他是什么样」的栏目名曾经和「＋」「锁」挤在同一个 68px 的 flex 盒子里：
+// 名字是可收缩项，中文的 min-content 就是**一个字**，字号一大就被压成逐字竖排
+// （2026-11-22 用户截图）。现在栏目名独占一整行，名字不许换行。
+test('栏目名独占一行且不换行，按钮不跟它抢宽度', () => {
+  const cols = sliceBetween(client, "browse === 'columns' && row.aboutColumns?.length", '// 值：缩进一级')
   const nameAt = cols.indexOf('col.name')
   assert.ok(nameAt > 0, '找不到栏目名')
-  const after = cols.slice(nameAt, nameAt + 200)
-  assert.ok(!/col\.name[\s\S]{0,60}h\(\s*'button'/u.test(after), '栏目名容器里又塞按钮了（字一大就逐字竖排）')
-  assert.ok(!/col\.name[\s\S]{0,80}h\(LockChip/u.test(after), '锁按钮又塞回栏目名容器里了')
-  const before = cols.slice(Math.max(0, nameAt - 300), nameAt)
-  assert.ok(before.includes("whiteSpace: 'nowrap'"), '栏目名要 whiteSpace: nowrap（否则窄了一字一行）')
-  assert.ok(before.includes("minWidth: '68px'"), '栏目名要给最小宽度，短名字之间才对得齐')
+  assert.ok(cols.slice(Math.max(0, nameAt - 400), nameAt + 200).includes("whiteSpace: 'nowrap'"), '栏目名要 whiteSpace: nowrap（否则窄了一字一行）')
+  assert.ok(!cols.includes("flex: '0 0 68px'"), '旧的固定 68px 格子要拆掉（名字和按钮抢宽度）')
+})
+
+// 栏目与栏目内的值改成两级（2026-11-22 用户定）：栏目名一行、值缩进在下面、
+// 栏目之间双色交替、每栏能单独折起来，打开一个人时**默认全收起**。
+test('栏目两级：名一行、值缩进、双色交替、默认全收起', () => {
+  const detail = sliceBetween(client, 'function DetailBlock', 'function DraftBlock')
+  // 默认收起：记的是"展开"的集合，空集合＝全收（反过来记"收起"就得预填满，栏目是动态的）
+  assert.match(detail, /const \[openCols, setOpenCols\] = useState\(\(\) => new Set\(\)\)/, '栏目默认要全收起')
+  assert.ok(detail.includes('toggleColOpen'), '缺「折叠某一栏」的函数')
+  assert.match(detail, /openCols\.has\(col\.code\)/, '没按展开状态决定画不画值')
+  assert.match(detail, /paddingLeft: '1\.8em'/, '值要缩进一级')
+  assert.match(detail, /index % 2 === 0 \? ui\.soft : 'transparent'/, '双色交替要按栏目序号，且走主题色（不写死颜色）')
+  assert.ok(detail.includes('（空）'), '空栏目要标出来（收起状态也看得出这栏没东西）')
+  assert.ok(detail.includes('▾') && detail.includes('▸'), '栏目行要有 ▸／▾')
+})
+
+// 栏目收起后里面的行不在屏幕上：Shift 连选与全选都按「看得见的行」算（ADR 0112），
+// 不排除收起的栏目就会选中玩家根本没看见的东西。
+test('批量选择只算看得见的行：收起的栏目不算', () => {
+  const detail = sliceBetween(client, 'function DetailBlock', 'function DraftBlock')
+  const order = ['visibleClaimIds', 'visibleCogIds']
+  for (let i = 0; i < order.length; i += 1) {
+    const from = detail.indexOf(`const ${order[i]} =`)
+    assert.ok(from > 0, `找不到 ${order[i]}`)
+    // 窗口只到下一个声明为止：否则相邻那段里的 filter 会替它蒙混过关
+    const nextAt = order[i + 1] ? detail.indexOf(`const ${order[i + 1]} =`, from) : -1
+    const block = detail.slice(from, nextAt > from ? nextAt : from + 400)
+    assert.ok(block.includes('filter((col) => openCols.has(col.code))'), `${order[i]} 没排除收起的栏目`)
+  }
 })
 
 // 拖拽只在人物行的标题行生效（2026-11-06 用户反馈）：

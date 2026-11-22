@@ -614,6 +614,10 @@ window.__ModuleLoader__.load({
       const [openCognitions, setOpenCognitions] = useState(true)
       // 哪几栏已经点开「还有 N 条」：按栏目码记，两块共用一个集合（码不会同时出现在两边之外）
       const [openColumns, setOpenColumns] = useState(() => new Set())
+      // 哪几栏是**展开**的（2026-11-22 用户定：打开一个人默认全收起）。
+      // 记"展开"而不是"收起"：栏目跟着人物动态变，记"收起"就得预填满所有码，新栏目永远进不来。
+      // 空集合＝全部收起。跟上面那个「还有 N 条」是两套：一个管整栏折起来，一个管一栏太长只露前 6 条。
+      const [openCols, setOpenCols] = useState(() => new Set())
       // 批量多选（ADR 0112）：一个开关 + 两套选中集合（命题 / 认知）。关掉开关就清空。
       const [multi, setMulti] = useState(false)
       const [pickedClaims, setPickedClaims] = useState(() => new Set())
@@ -628,6 +632,16 @@ window.__ModuleLoader__.load({
 
       const toggleColumn = (code) => {
         setOpenColumns((prev) => {
+          const next = new Set(prev)
+          if (next.has(code)) next.delete(code)
+          else next.add(code)
+          return next
+        })
+      }
+
+      // 整栏折起来／放下来（跟上面那个"还有 N 条"不是一个东西）
+      const toggleColOpen = (code) => {
+        setOpenCols((prev) => {
           const next = new Set(prev)
           if (next.has(code)) next.delete(code)
           else next.add(code)
@@ -699,9 +713,13 @@ window.__ModuleLoader__.load({
 
       // ── Shift 区间选择（ADR 0112）──
       // 「看得见的行」＝按栏目顺序、栏内按显示顺序（折叠的栏目只算截断后那些）——用户看到什么就能连选什么
+      // 栏目收起时里面的行根本不在屏幕上，不能算进「看得见的行」
+      // （ADR 0112 的口径：宁可少选，不猜区间）
       const visibleClaimIds = (row.aboutColumns ?? [])
+        .filter((col) => openCols.has(col.code))
         .flatMap((col) => shownItems(col.claims ?? [], openColumns.has(col.code)).map((one) => String(one.claimId)))
       const visibleCogIds = (row.cognitionColumns ?? [])
+        .filter((col) => openCols.has(col.code))
         .flatMap((col) => shownItems(col.items ?? [], openColumns.has(col.code)).map((one) => String(one.claimId)))
       // 普通点：切这一条并把锚点挪过来；Shift 点：把锚点到这一条之间的行**并入**选择（锚点不动）
       const pickOne = (event, setter, order, anchorRef, id) => {
@@ -858,51 +876,73 @@ window.__ModuleLoader__.load({
                   count: aboutCount,
                   onToggle: () => setOpenAbout((value) => !value),
                 }),
-                openAbout ? row.aboutColumns.map((col) => {
+                openAbout ? row.aboutColumns.map((col, index) => {
                   const expanded = openColumns.has(col.code)
+                  const colOpen = openCols.has(col.code)
+                  const count = col.claims?.length ?? 0
+                  // 栏目与栏目内的值分两级（2026-11-22 用户定）：名字独占一行、值缩进在下面。
+                  // 底色按序号一浅一深交替；走主题的 soft，深色主题也不会糊成一片。
                   return h(
                     'div',
                     {
                       key: col.code,
-                      style: { display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: font.xs },
+                      style: {
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 2,
+                        padding: '2px 4px',
+                        borderRadius: 4,
+                        background: index % 2 === 0 ? ui.soft : 'transparent',
+                      },
                     },
-                    // 名字独占一格：以前名字和「＋」「锁」塞在同一个固定 68px 的 flex 盒子里，
-                    // 名字是可收缩项，而中文的 min-content 就是**一个字**——字号一大就被压成逐字竖排
-                    // （2026-11-22 用户截图）。现在名字单独一个 span，不许换行；按钮另起一个小容器。
+                    // 栏目名那一行：整行可点折叠。右边两个按钮各挡一下冒泡，否则点按钮会顺手把栏收了
                     h(
-                      'span',
-                      { style: { ...muted, flex: '0 0 auto', minWidth: '68px', whiteSpace: 'nowrap' } },
-                      col.name,
-                    ),
-                    h(
-                      'span',
-                      { style: { display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 } },
+                      'div',
+                      {
+                        onClick: () => toggleColOpen(col.code),
+                        style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: font.xs, cursor: 'pointer' },
+                        title: colOpen ? '点我收起这一栏' : '点我展开这一栏',
+                      },
+                      h('span', { style: { ...muted, width: '1em', flexShrink: 0 } }, colOpen ? '▾' : '▸'),
+                      // 名字 nowrap：以前被挤成逐字竖排，就是因为它是可断行的
+                      h('span', { style: { ...muted, fontWeight: 600, whiteSpace: 'nowrap' } }, col.name),
+                      h('span', { style: { ...muted, fontWeight: 400 } }, count ? `· ${count}` : '（空）'),
                       h(
-                        'button',
-                        {
-                          onClick: () => {
-                            const next = window.prompt(`给「${row.name}」的「${col.name}」加一条：`, '')
-                            if (!next || !next.trim()) return
-                            call('add-claim', { personId: row.id, code: col.code, text: next.trim() }, '已添加')
+                        'span',
+                        { style: { display: 'flex', alignItems: 'center', gap: 2, marginLeft: 'auto', flexShrink: 0 } },
+                        h(
+                          'button',
+                          {
+                            onClick: (event) => {
+                              event.stopPropagation()
+                              const next = window.prompt(`给「${row.name}」的「${col.name}」加一条：`, '')
+                              if (!next || !next.trim()) return
+                              call('add-claim', { personId: row.id, code: col.code, text: next.trim() }, '已添加')
+                            },
+                            disabled: Boolean(busy),
+                            title: '加一条关于他的命题',
+                            style: { ...iconBtn, fontSize: font.xxs, padding: '0 3px', lineHeight: '14px' },
                           },
+                          '＋',
+                        ),
+                        h(LockChip, {
+                          key: `lock-col-${col.code}`,
+                          lockedBy: col.lockedBy,
                           disabled: Boolean(busy),
-                          title: '加一条关于他的命题',
-                          style: { ...iconBtn, fontSize: font.xxs, padding: '0 3px', lineHeight: '14px' },
-                        },
-                        '＋',
+                          onToggle: (event) => {
+                            event?.stopPropagation?.()
+                            call('toggle', { personId: row.id, field: 'lockEntry', code: col.code }, '已切换栏目锁')
+                          },
+                        }),
                       ),
-                      h(LockChip, {
-                        key: `lock-col-${col.code}`,
-                        lockedBy: col.lockedBy,
-                        disabled: Boolean(busy),
-                        onToggle: () => call('toggle', { personId: row.id, field: 'lockEntry', code: col.code }, '已切换栏目锁'),
-                      }),
                     ),
-                    col.claims.length
+                    // 值：缩进一级。收起时整段不画
+                    colOpen
                       ? h(
-                          'span',
-                          { style: { display: 'flex', flexDirection: 'column', gap: 2 } },
-                          shownItems(col.claims, expanded).map((claim) =>
+                          'div',
+                          { style: { display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: '1.8em', fontSize: font.xs } },
+                          count
+                            ? shownItems(col.claims, expanded).map((claim) =>
                             h(
                               'span',
                               {
@@ -965,14 +1005,17 @@ window.__ModuleLoader__.load({
                                 h(TrashIcon),
                               ),
                             ),
-                          ),
-                          h(MoreToggle, {
-                            total: col.claims.length,
-                            expanded,
-                            onToggle: () => toggleColumn(col.code),
-                          }),
+                          )
+                            : h('span', { key: 'empty', style: { ...muted, fontStyle: 'italic' } }, '（空）'),
+                          count
+                            ? h(MoreToggle, {
+                                total: count,
+                                expanded,
+                                onToggle: () => toggleColumn(col.code),
+                              })
+                            : null,
                         )
-                      : h('span', { style: { ...muted, fontStyle: 'italic' } }, '（空）'),
+                      : null,
                   )
                 }) : null,
               )
@@ -989,49 +1032,85 @@ window.__ModuleLoader__.load({
                   count: cognitionCount,
                   onToggle: () => setOpenCognitions((value) => !value),
                 }),
-                openCognitions ? row.cognitionColumns.map((col) => {
+                openCognitions ? row.cognitionColumns.map((col, index) => {
                   const expanded = openColumns.has(col.code)
+                  const colOpen = openCols.has(col.code)
+                  // 跟「他是什么样」同一套两级版式（2026-11-22 用户定）：名字一行、值缩进、双色交替
                   return h(
                     'div',
-                    { key: col.code, style: { display: 'flex', flexDirection: 'column', gap: 2 } },
-                    h('div', { style: { ...muted, fontSize: font.xs, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 } },
-                      col.name,
-                      h(EyeChip, {
-                        key: `eye-col-${col.code}`,
-                        hiddenBy: col.hiddenBy,
-                        disabled: Boolean(busy),
-                        onToggle: () => call('toggle', { personId: row.id, field: 'hideEntry', code: col.code }, '已切换栏目可见性'),
-                      }),
-                      // 补一条认知（ADR 0116）：只能从**已有命题**里选，不在这里新造内容
-                      h('button', {
-                        key: `add-cog-${col.code}`,
-                        onClick: () => setPickFor(pickFor === col.code ? '' : col.code),
-                        disabled: Boolean(busy) || !catalog.claims.length,
-                        title: catalog.claims.length
-                          ? '补一条认知：只能从已有命题里选（不新写内容）'
-                          : '档案里还没有命题，先去「他是什么样」加一条',
-                        style: { ...iconBtn, fontSize: font.xxs, padding: '0 3px', lineHeight: '14px' },
-                      }, '＋'),
-                      pickFor === col.code
-                        ? h('select', {
-                            key: `pick-${col.code}`,
-                            defaultValue: '',
-                            onChange: (event) => {
-                              const id = Number(event.target.value)
-                              if (!id) return
-                              call('add-cognition', { personId: row.id, claimId: id }, '认知已加')
-                              setPickFor('')
-                            },
-                            style: { fontSize: font.xxs, maxWidth: 320 },
-                          }, [
-                            h('option', { key: 'none', value: '' }, '选一条已有命题…'),
-                            ...catalog.claims.map((claim) =>
-                              h('option', { key: claim.claimId, value: String(claim.claimId) },
-                                `${claim.personName} · ${claim.columnName}：${claim.text}`)),
-                          ])
-                        : null,
+                    {
+                      key: col.code,
+                      style: {
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 2,
+                        padding: '2px 4px',
+                        borderRadius: 4,
+                        background: index % 2 === 0 ? ui.soft : 'transparent',
+                      },
+                    },
+                    h(
+                      'div',
+                      {
+                        onClick: () => toggleColOpen(col.code),
+                        style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: font.xs, cursor: 'pointer' },
+                        title: colOpen ? '点我收起这一栏' : '点我展开这一栏',
+                      },
+                      h('span', { style: { ...muted, width: '1em', flexShrink: 0 } }, colOpen ? '▾' : '▸'),
+                      h('span', { style: { ...muted, fontWeight: 600, whiteSpace: 'nowrap' } }, col.name),
+                      h('span', { style: { ...muted, fontWeight: 400 } }, `· ${col.items.length}`),
+                      h(
+                        'span',
+                        { style: { display: 'flex', alignItems: 'center', gap: 2, marginLeft: 'auto', flexShrink: 0 } },
+                        h(EyeChip, {
+                          key: `eye-col-${col.code}`,
+                          hiddenBy: col.hiddenBy,
+                          disabled: Boolean(busy),
+                          onToggle: (event) => {
+                            event?.stopPropagation?.()
+                            call('toggle', { personId: row.id, field: 'hideEntry', code: col.code }, '已切换栏目可见性')
+                          },
+                        }),
+                        // 补一条认知（ADR 0116）：只能从**已有命题**里选，不在这里新造内容。
+                        // 下拉**不受栏目收起影响**：它属于「加东西」，不是「看东西」
+                        h('button', {
+                          key: `add-cog-${col.code}`,
+                          onClick: (event) => {
+                            event.stopPropagation()
+                            setPickFor(pickFor === col.code ? '' : col.code)
+                          },
+                          disabled: Boolean(busy) || !catalog.claims.length,
+                          title: catalog.claims.length
+                            ? '补一条认知：只能从已有命题里选（不新写内容）'
+                            : '档案里还没有命题，先去「他是什么样」加一条',
+                          style: { ...iconBtn, fontSize: font.xxs, padding: '0 3px', lineHeight: '14px' },
+                        }, '＋'),
+                      ),
                     ),
-                    shownItems(col.items, expanded).map((cog) =>
+                    pickFor === col.code
+                      ? h('select', {
+                          key: `pick-${col.code}`,
+                          defaultValue: '',
+                          onChange: (event) => {
+                            const id = Number(event.target.value)
+                            if (!id) return
+                            call('add-cognition', { personId: row.id, claimId: id }, '认知已加')
+                            setPickFor('')
+                          },
+                          style: { fontSize: font.xxs, maxWidth: 320, marginLeft: '1.8em' },
+                        }, [
+                          h('option', { key: 'none', value: '' }, '选一条已有命题…'),
+                          ...catalog.claims.map((claim) =>
+                            h('option', { key: claim.claimId, value: String(claim.claimId) },
+                              `${claim.personName} · ${claim.columnName}：${claim.text}`)),
+                        ])
+                      : null,
+                    // 值：缩进一级。收起时整段不画
+                    colOpen
+                      ? h(
+                          'div',
+                          { style: { display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: '1.8em', fontSize: font.xs } },
+                          shownItems(col.items, expanded).map((cog) =>
                       h(
                         'div',
                         {
@@ -1153,11 +1232,13 @@ window.__ModuleLoader__.load({
                         ),
                       ),
                     ),
-                    h(MoreToggle, {
-                      total: col.items.length,
-                      expanded,
-                      onToggle: () => toggleColumn(col.code),
-                    }),
+                          h(MoreToggle, {
+                            total: col.items.length,
+                            expanded,
+                            onToggle: () => toggleColumn(col.code),
+                          }),
+                        )
+                      : null,
                   )
                 }) : null,
               )
