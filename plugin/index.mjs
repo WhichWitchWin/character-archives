@@ -578,7 +578,7 @@ async function editTurnOf(ctx, gameId, state) {
 }
 
 /** 调试日志最多留多少条。 */
-const DEBUG_LOG_MAX = 100
+const DEBUG_LOG_MAX = 200
 
 /**
  * 往调试日志里塞一条。
@@ -597,6 +597,7 @@ const DEBUG_LOG_MAX = 100
 const DEBUG_KINDS = [
   [/结算开始/, 'settle'],
   [/MVU/, 'mvu'],
+  [/召回/, 'recall'],
   [/判定/, 'judge'],
   [/被拒/, 'reject'],
   [/失败/, 'error'],
@@ -1813,10 +1814,40 @@ export function apply(ctx) {
         }
 
         const pieces = [result.text, manual.text].filter((piece) => String(piece ?? '').trim())
+        // 召回日志（2026-11-14 补）：之前整条链一条调试都没有，「召回一直是空」
+        // 只能靠玩家感觉"模型不记得人"来发现；现在成功与空都能在调试页看到
+        if (result.text) {
+          pushDebug(state, 'info', `召回注入 ${result.used ?? 0} 字`, {
+            人: new Set(autoPointers.map((pointer) => String(pointer[0]))).size,
+            块: Array.isArray(result.blocks) ? result.blocks.length : 0,
+            主角回场: Boolean(state.flags?.playerBack),
+          })
+        } else {
+          pushDebug(state, 'warn', '这一轮召回是空的', {
+            说明: '没有可注入的指针，或全被眼 / 冷却 / 栏目勾选挡住',
+          })
+        }
+        if (manual.text) {
+          pushDebug(state, 'info', `手动召回注入 ${Array.isArray(manual.done) ? manual.done.length : 0} 人`, {
+            点名: Array.isArray(manual.done) ? manual.done.slice(0, 10) : null,
+          })
+        }
         return pieces.join('\n\n')
       } catch (error) {
         // turnSection 出错只该让这一段缺席，绝不能影响正文生成
         ctx.tavern.log?.warn?.('人物档案馆：召回注入失败', error)
+        // 面板调试也要看得见：召回整段静默失效是最难查的那种（2026-11-14 真踩过——
+        // 作用域写错导致 ReferenceError，被这个 catch 吞掉，玩家在面板上什么都看不到）
+        try {
+          const failed = await loadGameState(ctx.tavern, gameId)
+          pushDebug(failed, 'error', '召回注入失败（这一轮缺席）', {
+            error: String(error?.message ?? error),
+            stack: String(error?.stack ?? error).split('\n').slice(0, 4),
+          })
+          await saveGameState(ctx, gameId, failed)
+        } catch {
+          // 连整局数据都读不出来：只剩宿主日志，尽力了
+        }
         return ''
       }
     },

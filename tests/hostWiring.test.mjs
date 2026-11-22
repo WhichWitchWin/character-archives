@@ -697,6 +697,16 @@ test('锁定接线：值锁按当前快照过滤 + 删命题时同步清锁', ()
   assert.ok(hides >= 4, `值眼也要跟着清，实际 ${hides} 处`)
 })
 
+test('召回接线：成功 / 空 / 失败三条日志都要接进调试面板', () => {
+  // 2026-11-14 之前召回整条链一条调试都没有：注入整段静默失效时，
+  // 玩家只会觉得"模型不记得人"，面板上什么都查不到
+  assert.ok(source.includes('召回注入 ${'), '缺少成功日志（注入了多少字/多少人）')
+  assert.ok(source.includes('这一轮召回是空的'), '缺少空召回 warn')
+  assert.ok(source.includes('召回注入失败（这一轮缺席）'), '缺少失败 error（不能只塞宿主日志）')
+  assert.ok(source.includes('const DEBUG_LOG_MAX = 200'), '调试日志上限要放到 200 条')
+  assert.ok(source.includes("[/召回/, 'recall']"), '召回要能按类型筛出来')
+})
+
 test('眼睛接线：召回集合走纯函数（引用错作用域会让召回整体静默失效）', () => {
   assert.ok(source.includes('...recallEyeSets(state.flags, snapshot)'), '三层眼要走 recallEyeSets，别在调用处直接拼')
   // 反向守卫：2026-11-14 在 apply() 里引用了 runWriteback() 的局部变量 `hiddenEntries`，

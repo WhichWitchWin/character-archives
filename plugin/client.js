@@ -2122,6 +2122,8 @@ window.__ModuleLoader__.load({
     const KIND_COLOR = {
       settle: '#4a6fa5',
       mvu: '#2f8f8f',
+      // 召回单独一色（2026-11-14）：注入成不成、字数多少，是排查"模型记不记得人"的第一眼
+      recall: '#1f7a6a',
       judge: '#7b5ea7',
       write: '#2e7d4f',
       reject: '#b8791a',
