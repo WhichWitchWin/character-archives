@@ -837,3 +837,14 @@ test('豁免接线：撤回／删人／导入／初值形状四处不能漏', ()
   assert.ok(source.includes('state.flags.manualFree = {}'), '导入（整份换档案）没清豁免标记')
   assert.ok(source.includes('lastHits: {}, manualFree: {}'), 'createGameState 的 flags 没声明 manualFree')
 })
+
+// 「冷却的本质是防重复注入」——正文模型自己查档案也是把内容交给了模型看一遍，
+// 所以这条路同样消费豁免标记（2026-11-22 用户定）。
+test('豁免接线：正文模型查档案（archive_query）也算「给过一次」', () => {
+  const at = source.indexOf("name: 'archive_query'")
+  assert.ok(at > 0, '找不到 archive_query 工具')
+  const body = source.slice(at, at + 4600)
+  assert.ok(body.includes('manualFree:'), 'archive_query 没传 manualFree')
+  assert.ok(body.includes('manualFreeUsed'), 'archive_query 没把「用掉了」写回')
+  assert.ok(body.includes('manualFreeStale'), 'archive_query 没把「没用了」清掉')
+})

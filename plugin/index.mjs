@@ -1729,6 +1729,8 @@ export function apply(ctx) {
             name: args?.姓名,
             level,
             cooldowns: state.cooldowns ?? {},
+            // 查档案也是「把内容交给模型看了一遍」→ 消费豁免标记（ADR 0118）
+            manualFree: state.flags?.manualFree ?? {},
             cooldownTurns: settings.recall?.cooldownOn ? settings.recall?.cooldownTurns : 0,
             turn,
             cognition: settings.cognition,
@@ -1736,14 +1738,26 @@ export function apply(ctx) {
           if (!result.ok) return result.reason
 
           const turns = settings.recall?.cooldownOn ? settings.recall?.cooldownTurns : 0
+          let dirty = false
           if (turns > 0 && result.pointers.length) {
             const next = { ...(state.cooldowns ?? {}) }
             for (const pointer of result.pointers) {
               next[pointerKey(pointer[0], pointer[1])] = { lastTurn: turn, until: turn + turns }
             }
             state.cooldowns = next
-            await saveGameState(ctx, gameId, state)
+            dirty = true
           }
+          // 手动豁免标记（ADR 0118）：查过就算给过一次——冷却的本质是防重复注入，
+          // 内容已经进了模型上下文，就不该再插一次队；本来就不冷却的标记也顺手清掉
+          const freeDrop = [...(result.manualFreeUsed ?? []), ...(result.manualFreeStale ?? [])]
+          if (freeDrop.length) {
+            const nextFree = { ...(state.flags?.manualFree ?? {}) }
+            for (const key of freeDrop) delete nextFree[key]
+            state.flags = state.flags ?? {}
+            state.flags.manualFree = nextFree
+            dirty = true
+          }
+          if (dirty) await saveGameState(ctx, gameId, state)
           return result.text
         } catch (error) {
           return '查档案出错：' + String(error?.message || error)
