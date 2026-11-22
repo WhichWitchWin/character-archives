@@ -64,7 +64,7 @@ import { buildPresetDefinitions } from './lib/presets.js'
 import { buildPanelView, DORMANT_TURNS } from './lib/panelView.js'
 import { listLeafPaths, parseMvu, readStatData } from './lib/mvu.js'
 import { addClaim, dropClaim, findClaim, pruneOrphanClaims } from './lib/claims.js'
-import { addPointer, dropPointer, hasSelf, pointersTo, setEntry, TRUTH as PTRUTH } from './lib/pointers.js'
+import { addPointer, cognitionRefusal, dropPointer, hasSelf, pointersTo, setEntry, TRUTH as PTRUTH } from './lib/pointers.js'
 import { surveyStatData } from './lib/mvuMap.js'
 import { DEFAULT_MAX_IDLE, expireDraft, pruneDraft, scanDraft } from './lib/draft.js'
 import { DEFAULT_IDENTITY, MAX_PLAYER_NAME, PERSON_OPTIONS, applyIdentityPatch, identityProblem, personLabel, pronounOf, resolveIdentity } from './lib/identity.js'
@@ -3424,6 +3424,56 @@ export function apply(ctx) {
   // ── 删掉「某人对某条命题的认知」（面板「他的认知」每条后面的 🗑）──
   // **只摘指针，绝不删命题**：命题本身还要在「他是什么样」里当他的档案出现，
   // 顺手删掉的话，这个人就找不到自己那条记录了（两栏是同一批命题的两个视角）。
+  // 面板「补认知」的选择器数据：全体已建档人物 + 全体命题摘要（轻量，无指针无认知）
+  ctx.tavern.handle('character-archives/claim-picker', async ({ gameId } = {}) => {
+    if (!gameId) return { ok: false, reason: '没有打开的对局' }
+    const state = await loadGameState(ctx.tavern, gameId)
+    const turn = state.meta?.updatedTurn
+    if (!Number.isInteger(turn)) return { ok: true, people: [], claims: [] }
+    const { snapshot } = await readSnapshotAt(ctx, gameId, turn)
+    const definitions = state.entries ?? {}
+    const nameOf = (id) => String((snapshot.p ?? []).find((person) => String(person?.[0]) === String(id))?.[2] ?? '').trim()
+    return {
+      ok: true,
+      // 人名只给已建档的：来源、认知都只能从这里面选（2026-11-22 定）
+      people: (snapshot.p ?? []).map((person) => String(person?.[2] ?? '').trim()).filter(Boolean),
+      claims: (snapshot.c ?? []).map((claim) => ({
+        claimId: claim?.[0],
+        personName: nameOf(claim?.[1]),
+        columnName: String(definitions?.[claim?.[2]]?.name ?? claim?.[2] ?? ''),
+        text: String(claim?.[3] ?? ''),
+      })),
+    }
+  })
+
+  // ── 面板「给他补一条认知」（ADR 0116）：只能从**已有命题**里选 ──
+  // 为什么不让在这里新写内容：新内容走「他是什么样」的 ＋（那儿有栏目/长度/正文字典校验）；
+  // 认知的本质是"谁知道哪句**已有**的话"，让它也能造内容会绕开那一整套校验。
+  ctx.tavern.handle('character-archives/add-cognition', async ({ gameId, personId, claimId } = {}) => {
+    if (!gameId) return { ok: false, reason: '没有打开的对局' }
+    const state0 = await loadGameState(ctx.tavern, gameId)
+    const turn = await editTurnOf(ctx, gameId, state0)
+    if (!turn) return { ok: false, reason: '这一局还没有正文，先玩一轮再加' }
+    const { snapshot } = await readSnapshotAt(ctx, gameId, turn)
+
+    const refusal = cognitionRefusal({
+      persons: snapshot.p ?? [],
+      claims: snapshot.c ?? [],
+      pointers: snapshot.pt ?? [],
+      personId,
+      claimId,
+    })
+    if (refusal) return { ok: false, reason: refusal }
+
+    const pointer = addPointer(snapshot.pt, { personId: String(personId), claimId: Number(claimId), turn })
+    if (!pointer) return { ok: false, reason: '指针建不出来' }
+    // 默认「未定」：玩家只说了"他知道这件事"，信不信由他自己再改（ADR 0019 的默认口径）
+    if (!hasSelf(pointer)) setEntry(pointer, { state: PTRUTH.UNKNOWN })
+
+    await saveSnapshot(ctx, { gameId, turn, snapshot, textVersion: await currentTextVersion(ctx, gameId, turn) })
+    return { ok: true, claimId: Number(claimId) }
+  })
+
   ctx.tavern.handle('character-archives/delete-cognition', async ({ gameId, personId, claimId } = {}) => {
     if (!gameId) return { ok: false, reason: '没有打开的对局' }
     if (typeof personId !== 'string' || !personId) return { ok: false, reason: '没指定人物' }

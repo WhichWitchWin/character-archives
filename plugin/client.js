@@ -14,6 +14,9 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const PLUGIN = 'character-archives'
+    // 与 lib/pointers.js 的来源编码对齐（浏览器侧不 import 本地模块，只能各写一份常量）
+    const SELF_SOURCE = ''
+    const UNKNOWN_SOURCE = '?'
 
 
     // 身份（玩家称呼＋人称）：按卡存，档案界面顶部直接能改
@@ -608,6 +611,23 @@ window.__ModuleLoader__.load({
       // Shift 区间选择的锚点（命题/认知各记各的）
       const claimAnchor = useRef(null)
       const cogAnchor = useRef(null)
+      // 认知视图要用：全体已建档人名（来源只能从这里选）＋全体命题摘要（补认知只能从已有命题里选）
+      // 一次拉取；取不到就退化成空列表，不挡面板其余功能
+      const [catalog, setCatalog] = useState({ people: [], claims: [] })
+      // 正在给哪一栏挑命题（''=没在挑）
+      const [pickFor, setPickFor] = useState('')
+      useEffect(() => {
+        let alive = true
+        tavernUi
+          .callHost(`${PLUGIN}/claim-picker`, { gameId })
+          .then((result) => {
+            if (alive) setCatalog({ people: result?.people ?? [], claims: result?.claims ?? [] })
+          })
+          .catch(() => {})
+        return () => {
+          alive = false
+        }
+      }, [tavernUi, gameId])
 
       const toggleColumn = (code) => {
         setOpenColumns((prev) => {
@@ -978,6 +998,34 @@ window.__ModuleLoader__.load({
                         disabled: Boolean(busy),
                         onToggle: () => call('toggle', { personId: row.id, field: 'hideEntry', code: col.code }, '已切换栏目可见性'),
                       }),
+                      // 补一条认知（ADR 0116）：只能从**已有命题**里选，不在这里新造内容
+                      h('button', {
+                        key: `add-cog-${col.code}`,
+                        onClick: () => setPickFor(pickFor === col.code ? '' : col.code),
+                        disabled: Boolean(busy) || !catalog.claims.length,
+                        title: catalog.claims.length
+                          ? '补一条认知：只能从已有命题里选（不新写内容）'
+                          : '档案里还没有命题，先去「他是什么样」加一条',
+                        style: { ...iconBtn, fontSize: font.xxs, padding: '0 3px', lineHeight: '14px' },
+                      }, '＋'),
+                      pickFor === col.code
+                        ? h('select', {
+                            key: `pick-${col.code}`,
+                            defaultValue: '',
+                            onChange: (event) => {
+                              const id = Number(event.target.value)
+                              if (!id) return
+                              call('add-cognition', { personId: row.id, claimId: id }, '认知已加')
+                              setPickFor('')
+                            },
+                            style: { fontSize: font.xxs, maxWidth: 320 },
+                          }, [
+                            h('option', { key: 'none', value: '' }, '选一条已有命题…'),
+                            ...catalog.claims.map((claim) =>
+                              h('option', { key: claim.claimId, value: String(claim.claimId) },
+                                `${claim.personName} · ${claim.columnName}：${claim.text}`)),
+                          ])
+                        : null,
                     ),
                     shownItems(col.items, expanded).map((cog) =>
                       h(
@@ -1060,10 +1108,12 @@ window.__ModuleLoader__.load({
                               h('option', { value: '1' }, '假'),
                               h('option', { value: '2' }, '未定'),
                             ),
-                            h('input', {
-                              defaultValue: group.sourceName,
-                              title: '来源：自己／未知／某个已建档的人名',
-                              onBlur: (event) => {
+                            // 来源只能是「自己 / 未知 / 已建档的某个人」——不再让玩家自由输入人名
+                            // （写错一个名字，后端解析不了就整条被拒；2026-11-22 改成下拉）
+                            h('select', {
+                              key: `src-${group.index}`,
+                              value: group.source === SELF_SOURCE ? '自己' : group.source === UNKNOWN_SOURCE ? '未知' : group.sourceName,
+                              onChange: (event) => {
                                 const next = String(event.target.value ?? '').trim()
                                 if (!next || next === group.sourceName) return
                                 call(
@@ -1072,8 +1122,14 @@ window.__ModuleLoader__.load({
                                   '来源已改',
                                 )
                               },
-                              style: { width: 64, fontSize: font.xs },
-                            }),
+                              style: { fontSize: font.xs, maxWidth: 96 },
+                            }, [
+                              h('option', { key: 'self', value: '自己' }, '自己'),
+                              h('option', { key: 'unknown', value: '未知' }, '未知'),
+                              ...catalog.people
+                                .filter((name) => name && name !== row.name)
+                                .map((name) => h('option', { key: name, value: name }, name)),
+                            ]),
                             group.gt ? h('span', { style: muted }, group.gt) : null,
                           ),
                         ),

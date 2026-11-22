@@ -76,6 +76,24 @@ export function pointerOf(pointers, personId, claimId) {
   )
 }
 
+/**
+ * 面板「给他补一条认知」前的校验。
+ *
+ * 语义：**认知只能从已有命题里选**（ADR 0116）——玩家能补的是"谁知道哪句已有的话"，
+ * 不能在这里新造内容；新内容一律走「他是什么样」的 `＋`（那儿有栏目校验）。
+ *
+ * @returns {string|null} 人话原因；null = 可以加
+ */
+export function cognitionRefusal({ persons = [], claims = [], pointers = [], personId, claimId } = {}) {
+  const pid = String(personId ?? '').trim()
+  const cid = Number(claimId)
+  if (!pid || !persons.some((person) => String(person?.[0] ?? '') === pid)) return '找不到这个人'
+  if (!Number.isInteger(cid) || cid <= 0) return '命题编号不对'
+  if (!claims.some((claim) => Number(claim?.[0]) === cid)) return '找不到这条命题'
+  if (pointerOf(pointers, pid, cid)) return '他已经记着这条了'
+  return null
+}
+
 export function pointersOf(pointers, personId) {
   if (!Array.isArray(pointers)) return []
   return pointers.filter((pointer) => Array.isArray(pointer) && pointer[POINTER_PERSON] === personId)

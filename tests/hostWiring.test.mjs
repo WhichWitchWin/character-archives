@@ -697,6 +697,18 @@ test('锁定接线：值锁按当前快照过滤 + 删命题时同步清锁', ()
   assert.ok(hides >= 4, `值眼也要跟着清，实际 ${hides} 处`)
 })
 
+test('补认知：只能从已有命题里选，人名只列已建档的（ADR 0116）', () => {
+  assert.ok(source.includes("'character-archives/add-cognition'"), '缺 add-cognition 接口')
+  assert.ok(source.includes("'character-archives/claim-picker'"), '缺 claim-picker 接口')
+  assert.ok(source.includes('cognitionRefusal('), '校验要走纯逻辑（可单测）')
+  const client = readFileSync(fileURLToPath(new URL('../plugin/client.js', import.meta.url)), 'utf8')
+  assert.ok(client.includes("call('add-cognition'"), '面板要接补认知')
+  assert.ok(client.includes('claim-picker'), '面板要拉选择器数据')
+  assert.ok(client.includes('catalog.people'), '来源要从已建档人名里选（不再自由输入）')
+  // 来源那格必须是下拉，不能退回自由输入
+  assert.ok(!client.includes('defaultValue: group.sourceName'), '来源不许再用自由输入框')
+})
+
 test('召回接线：快照要按「已结算轮」读，不能按宿主传的 turn', () => {
   // turnSection 的 turn 是「即将生成的这一轮」——那一刻它还没有快照，
   // 按它读每轮都 bootstrapped → 召回整段静默返回空（2026-11-22 实测：新会话 34 条日志里 recall 一条都没有）
